@@ -1,10 +1,15 @@
-import 'package:bestseeds/screens/login_screens/employee_login_screen.dart';
+import 'package:bestseeds/driver/screens/login_screens/login_screen.dart';
+import 'package:bestseeds/employee/controllers/auth_controller.dart';
+import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:flutter/material.dart';
-import '../main_navigation_screen.dart';
+import 'package:get/get.dart';
 
-class DriverLoginScreen extends StatelessWidget {
-  const DriverLoginScreen({super.key});
+class EmployeeLoginScreen extends StatelessWidget {
+  EmployeeLoginScreen({super.key});
+  final AuthController controller = Get.put(AuthController());
 
+  final idCtrl = TextEditingController();
+  final passCtrl = TextEditingController();
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
@@ -50,11 +55,11 @@ class DriverLoginScreen extends StatelessWidget {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                               Text(
-                                'Login as Driver',
+                              Text(
+                                'Login as Employee',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: width * 0.055 ,
+                                  fontSize: width * 0.055,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -64,7 +69,7 @@ class DriverLoginScreen extends StatelessWidget {
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) =>
-                                          const EmployeeLoginScreen(),
+                                        DriverLoginScreen(),
                                     ),
                                   ),
                                 },
@@ -86,25 +91,16 @@ class DriverLoginScreen extends StatelessWidget {
                           SizedBox(height: height * 0.07),
 
                           /// Title
-                          Text(
-                            'Ready To Begin Your\nFirst Delivery',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: width * 0.07,
-                              fontWeight: FontWeight.bold,
-                              height: 1.3,
-                            ),
-                          ),
-
-                          SizedBox(height: height * 0.02),
-
-                          /// Subtitle
-                          Text(
-                            'Just One Quick Step Remains To Get Started\nWith Your Deliveries.',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: width * 0.038,
-                              height: 1.4,
+                          Center(
+                            child: Text(
+                              'Secure Access for \n Best Seeds Employees',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: width * 0.07,
+                                fontWeight: FontWeight.bold,
+                                height: 1.3,
+                              ),
+                              textAlign: TextAlign.center,
                             ),
                           ),
                         ],
@@ -115,7 +111,7 @@ class DriverLoginScreen extends StatelessWidget {
                     Flexible(
                       child: Center(
                         child: Image.asset(
-                          'assets/images/login_truck.png',
+                          'assets/images/employee_login.png',
                           width: width * 1,
                           fit: BoxFit.contain,
                         ),
@@ -141,7 +137,7 @@ class DriverLoginScreen extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'Log in using your mobile number to\nstart delivering',
+                            'Log in with your Best Seeds ID',
                             style: TextStyle(
                               fontSize: width * 0.045,
                               fontWeight: FontWeight.w600,
@@ -159,19 +155,34 @@ class DriverLoginScreen extends StatelessWidget {
                             ),
                             child: Row(
                               children: [
-                                const Text(
-                                  '+91',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
                                 Expanded(
                                   child: TextField(
-                                    keyboardType: TextInputType.phone,
+                                    controller: idCtrl,
+                                    keyboardType: TextInputType.text,
                                     decoration: const InputDecoration(
-                                      hintText: 'Enter Mobile Number',
+                                      hintText: 'Enter Best Seeds ID',
+                                      border: InputBorder.none,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: height * 0.03),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: passCtrl,
+                                    keyboardType: TextInputType.text,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Enter Password',
                                       border: InputBorder.none,
                                     ),
                                   ),
@@ -183,34 +194,29 @@ class DriverLoginScreen extends StatelessWidget {
                           SizedBox(height: height * 0.03),
 
                           /// Continue button
-                          SizedBox(
-                            width: double.infinity,
-                            height: height * 0.06,
-                            child: ElevatedButton(
-                              onPressed: () {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const MainNavigationScreen(),
-                                  ),
-                                );
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0077C8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
+                          Obx(() => SizedBox(
+                                width: double.infinity,
+                                height: height * 0.06,
+                                child: ElevatedButton(
+                                  onPressed: controller.isLoading.value
+                                      ? null
+                                      : () {
+                                          print('UI: Continue button pressed');
+                                          print(
+                                              'UI: ID = ${idCtrl.text.trim()}');
+                                          print(
+                                              'UI: Password = ${passCtrl.text.trim()}');
+                                          controller.employeeLogin(
+                                            idCtrl.text.trim(),
+                                            passCtrl.text.trim(),
+                                          );
+                                        },
+                                  child: controller.isLoading.value
+                                      ? const CircularProgressIndicator(
+                                          color: Colors.white)
+                                      : const Text('Continue'),
                                 ),
-                              ),
-                              child: const Text(
-                                'Continue',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white),
-                              ),
-                            ),
-                          ),
+                              )),
 
                           SizedBox(height: height * 0.02),
 

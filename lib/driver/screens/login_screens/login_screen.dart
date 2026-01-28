@@ -1,9 +1,15 @@
-import 'package:bestseeds/screens/login_screens/login_screen.dart';
+import 'package:bestseeds/driver/controllers/driver_auth_controller.dart';
+import 'package:bestseeds/employee/screens/login_screens/employee_login_screen.dart';
+import 'package:bestseeds/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
-import '../main_navigation_screen.dart';
+import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 
-class EmployeeLoginScreen extends StatelessWidget {
-  const EmployeeLoginScreen({super.key});
+class DriverLoginScreen extends StatelessWidget {
+  DriverLoginScreen({super.key});
+
+  final DriverAuthController controller = Get.put(DriverAuthController());
+  final mobileCtrl = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -30,12 +36,13 @@ class EmployeeLoginScreen extends StatelessWidget {
           child: SingleChildScrollView(
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minHeight: height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom,
+                minHeight: height -
+                    MediaQuery.of(context).padding.top -
+                    MediaQuery.of(context).padding.bottom,
               ),
               child: IntrinsicHeight(
                 child: Column(
                   children: [
-                    /// ================= Header + Text =================
                     Padding(
                       padding: EdgeInsets.symmetric(
                         horizontal: width * 0.06,
@@ -44,30 +51,30 @@ class EmployeeLoginScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          /// Header row
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                               Text(
-                                'Login as Employee',
+                              Text(
+                                'Login as Driver',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: width * 0.055 ,
+                                  fontSize: width * 0.055,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                               GestureDetector(
                                 onTap: () => {
-                                 Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const DriverLoginScreen(),
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          EmployeeLoginScreen(),
+                                    ),
                                   ),
-                                ),
                                 },
                                 child: Container(
                                   padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
+                                  decoration: const BoxDecoration(
                                     color: Colors.white24,
                                     shape: BoxShape.circle,
                                   ),
@@ -79,38 +86,37 @@ class EmployeeLoginScreen extends StatelessWidget {
                               )
                             ],
                           ),
-
                           SizedBox(height: height * 0.07),
-
-                          /// Title
-                          Center(
-                            child: Text(
-                              'Secure Access for \n Best Seeds Employees',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: width * 0.07,
-                                fontWeight: FontWeight.bold,
-                                height: 1.3,
-                              ),
-                              textAlign: TextAlign.center,
+                          Text(
+                            'Ready To Begin Your\nFirst Delivery',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: width * 0.07,
+                              fontWeight: FontWeight.bold,
+                              height: 1.3,
+                            ),
+                          ),
+                          SizedBox(height: height * 0.02),
+                          Text(
+                            'Just One Quick Step Remains To Get Started\nWith Your Deliveries.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: width * 0.038,
+                              height: 1.4,
                             ),
                           ),
                         ],
                       ),
                     ),
-
-                    /// ================= Image Section =================
                     Flexible(
                       child: Center(
                         child: Image.asset(
-                          'assets/images/employee_login.png',
+                          'assets/images/login_truck.png',
                           width: width * 1,
                           fit: BoxFit.contain,
                         ),
                       ),
                     ),
-
-                    /// ================= Bottom Card =================
                     Container(
                       width: double.infinity,
                       padding: EdgeInsets.symmetric(
@@ -129,16 +135,13 @@ class EmployeeLoginScreen extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'Log in with your Best Seeds ID',
+                            'Log in using your mobile number to\nstart delivering',
                             style: TextStyle(
                               fontSize: width * 0.045,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-
                           SizedBox(height: height * 0.025),
-
-                          /// Mobile input
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
@@ -147,75 +150,67 @@ class EmployeeLoginScreen extends StatelessWidget {
                             ),
                             child: Row(
                               children: [
+                                const Text(
+                                  '+91',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: TextField(
+                                    controller: mobileCtrl,
                                     keyboardType: TextInputType.phone,
+                                    maxLength: 10,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
                                     decoration: const InputDecoration(
-                                      hintText: 'Enter Best Seeds ID',
+                                      hintText: 'Enter Mobile Number',
                                       border: InputBorder.none,
+                                      counterText: '',
                                     ),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        SizedBox(height: height * 0.03),
-                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    keyboardType: TextInputType.phone,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Enter Password',
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
                           SizedBox(height: height * 0.03),
-
-                          /// Continue button
-                          SizedBox(
-                            width: double.infinity,
-                            height: height * 0.06,
-                            child: ElevatedButton(
-                              onPressed: () {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const MainNavigationScreen(),
+                          Obx(() => SizedBox(
+                                width: double.infinity,
+                                height: height * 0.06,
+                                child: ElevatedButton(
+                                  onPressed: controller.isLoading.value
+                                      ? null
+                                      : () {
+                                          final mobile = mobileCtrl.text.trim();
+                                          if (mobile.length != 10) {
+                                              AppSnackbar.error('Please enter a valid 10-digit mobile number');
+                                            return;
+                                          }
+                                          controller.sendOtp(mobile);
+                                        },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0077C8),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
                                   ),
-                                );
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0077C8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
+                                  child: controller.isLoading.value
+                                      ? const CircularProgressIndicator(
+                                          color: Colors.white)
+                                      : const Text(
+                                          'Continue',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
                                 ),
-                              ),
-                              child: const Text(
-                                'Continue',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white
-                                ),
-                              ),
-                            ),
-                          ),
-
+                              )),
                           SizedBox(height: height * 0.02),
-
-                          /// Footer text
                           Center(
                             child: Text(
                               'By sign-in, I agree to the Terms & Conditions\nand Privacy Policy of BestSeed.',

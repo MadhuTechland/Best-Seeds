@@ -1,0 +1,279 @@
+class Booking {
+  final String bookingUid;
+  final int bookingId;
+  final String bookingType;
+  final int hatcheryId;
+  final String hatcheryName;
+  final int categoryId;
+  final String categoryName;
+  final int noOfPieces;
+  final int? salinity;
+  final String? preferredDate;
+  final String? deliveryDatetime;
+  final String droppingLocation;
+  final double travelCost;
+  final String? bookingDescription;
+  final String? vehicleDescription;
+  final double? latitude;
+  final double? longitude;
+  final BookingFarmer farmer;
+  final BookingStatus status;
+  final BookingDriverDetails driverDetails;
+  final BookingPickup? pickup;
+  final BookingCurrentLocation? currentLocation;
+  final BookingDestination? destination;
+
+  Booking({
+    required this.bookingUid,
+    required this.bookingId,
+    required this.bookingType,
+    required this.hatcheryId,
+    required this.hatcheryName,
+    required this.categoryId,
+    required this.categoryName,
+    required this.noOfPieces,
+    this.salinity,
+    this.preferredDate,
+    this.deliveryDatetime,
+    required this.droppingLocation,
+    required this.travelCost,
+    this.bookingDescription,
+    this.vehicleDescription,
+    this.latitude,
+    this.longitude,
+    required this.farmer,
+    required this.status,
+    required this.driverDetails,
+    this.pickup,
+    this.currentLocation,
+    this.destination,
+  });
+
+  factory Booking.fromJson(Map<String, dynamic> json) {
+    return Booking(
+      bookingUid: json['booking_uid'] ?? '',
+      bookingId: json['booking_id'] ?? 0,
+      bookingType: json['booking_type'] ?? '',
+      hatcheryId: json['hatchery_id'] ?? 0,
+      hatcheryName: json['hatchery_name'] ?? '',
+      categoryId: json['category_id'] ?? 0,
+      categoryName: json['category_name'] ?? '',
+      noOfPieces: json['no_of_pieces'] ?? 0,
+      salinity: json['salinity'],
+      preferredDate: json['packing_date'],
+      deliveryDatetime: json['delivery_datetime'],
+      droppingLocation: json['drop_location'] ?? '',
+      travelCost: (json['price'] != null) ? double.tryParse(json['price'].toString()) ?? 0.0 : 0.0,
+      bookingDescription: json['vendor_booking_description'] ?? '',
+      vehicleDescription: json['vendor_vehicle_description'] ?? '',
+      latitude: json['latitude'] != null
+          ? double.tryParse(json['latitude'].toString())
+          : null,
+      longitude: json['longitude'] != null
+          ? double.tryParse(json['longitude'].toString())
+          : null,
+      farmer: BookingFarmer.fromJson(json['farmer'] ?? {}),
+      status: BookingStatus.fromJson(json['status'] ?? {}),
+      driverDetails: BookingDriverDetails.fromJson(json['driver'] ?? {}),
+      pickup: json['pickup'] != null
+          ? BookingPickup.fromJson(json['pickup'])
+          : null,
+      currentLocation: json['current_location'] != null
+          ? BookingCurrentLocation.fromJson(json['current_location'])
+          : null,
+      destination: json['destination'] != null
+          ? BookingDestination.fromJson(json['destination'])
+          : null,
+    );
+  }
+
+  bool get isEditable =>
+      status.value == 1 || status.value == 2 || status.value == 3;
+
+  String get displayBookingType {
+    switch (bookingType) {
+      case 'spot_hatchery':
+        return 'Spot Hatchery';
+      case 'hatchery':
+        return 'Hatchery';
+      default:
+        return bookingType;
+    }
+  }
+}
+
+class BookingFarmer {
+  final String name;
+
+  BookingFarmer({required this.name});
+
+  factory BookingFarmer.fromJson(Map<String, dynamic> json) {
+    return BookingFarmer(
+      name: json['name'] ?? '',
+    );
+  }
+}
+
+class BookingDriverDetails {
+  final String name;
+  final String mobile;
+  final String vehicleNumber;
+
+  BookingDriverDetails(
+      {required this.name, required this.mobile, required this.vehicleNumber});
+
+  factory BookingDriverDetails.fromJson(Map<String, dynamic> json) {
+    return BookingDriverDetails(
+      name: json['driver_name'] ?? '',
+      mobile: json['driver_mobile'] ?? '',
+      vehicleNumber: json['vehicle_number'] ?? '',
+    );
+  }
+
+  bool get isAssigned => name.isNotEmpty && mobile.isNotEmpty;
+}
+
+class BookingStatus {
+  final int value;
+  final String label;
+
+  BookingStatus({
+    required this.value,
+    required this.label,
+  });
+
+  factory BookingStatus.fromJson(Map<String, dynamic> json) {
+    return BookingStatus(
+      value: json['value'] ?? 0,
+      label: json['label'] ?? '',
+    );
+  }
+
+  bool get isPending => value == 1;
+  bool get isAccepted => value == 2;
+  bool get isInProgress => value == 3;
+  bool get isDelivered => value == 4;
+  bool get isCompleted => value == 5;
+  bool get isRejected => value == 6;
+}
+
+class BookingPickup {
+  final String? locationName;
+  final double? lat;
+  final double? lng;
+  final String? vehicleStartedDate;
+
+  BookingPickup({
+    this.locationName,
+    this.lat,
+    this.lng,
+    this.vehicleStartedDate,
+  });
+
+  factory BookingPickup.fromJson(Map<String, dynamic> json) {
+    return BookingPickup(
+      locationName: json['location_name'],
+      lat: json['lat'] != null ? double.tryParse(json['lat'].toString()) : null,
+      lng: json['lng'] != null ? double.tryParse(json['lng'].toString()) : null,
+      vehicleStartedDate: json['vehicle_started_date'],
+    );
+  }
+}
+
+class BookingCurrentLocation {
+  final double? lat;
+  final double? lng;
+  final String? locationName;
+  final String? updatedAt;
+
+  BookingCurrentLocation({
+    this.lat,
+    this.lng,
+    this.locationName,
+    this.updatedAt,
+  });
+
+  factory BookingCurrentLocation.fromJson(Map<String, dynamic> json) {
+    return BookingCurrentLocation(
+      lat: json['lat'] != null ? double.tryParse(json['lat'].toString()) : null,
+      lng: json['lng'] != null ? double.tryParse(json['lng'].toString()) : null,
+      locationName: json['location_name'],
+      updatedAt: json['updated_at'],
+    );
+  }
+}
+
+class BookingDestination {
+  final String? locationName;
+  final double? lat;
+  final double? lng;
+
+  BookingDestination({
+    this.locationName,
+    this.lat,
+    this.lng,
+  });
+
+  factory BookingDestination.fromJson(Map<String, dynamic> json) {
+    return BookingDestination(
+      locationName: json['location_name'],
+      lat: json['lat'] != null ? double.tryParse(json['lat'].toString()) : null,
+      lng: json['lng'] != null ? double.tryParse(json['lng'].toString()) : null,
+    );
+  }
+}
+
+class BookingPagination {
+  final int currentPage;
+  final int lastPage;
+  final int perPage;
+  final int total;
+  final String? nextPageUrl;
+  final String? prevPageUrl;
+
+  BookingPagination({
+    required this.currentPage,
+    required this.lastPage,
+    required this.perPage,
+    required this.total,
+    this.nextPageUrl,
+    this.prevPageUrl,
+  });
+
+  factory BookingPagination.fromJson(Map<String, dynamic> json) {
+    return BookingPagination(
+      currentPage: json['current_page'] ?? 1,
+      lastPage: json['last_page'] ?? 1,
+      perPage: json['per_page'] ?? 10,
+      total: json['total'] ?? 0,
+      nextPageUrl: json['next_page_url'],
+      prevPageUrl: json['prev_page_url'],
+    );
+  }
+}
+
+class BookingsResponse {
+  final bool status;
+  final String message;
+  final BookingPagination pagination;
+  final List<Booking> bookings;
+
+  BookingsResponse({
+    required this.status,
+    required this.message,
+    required this.pagination,
+    required this.bookings,
+  });
+
+  factory BookingsResponse.fromJson(Map<String, dynamic> json) {
+    return BookingsResponse(
+      status: json['status'] ?? false,
+      message: json['message'] ?? '',
+      pagination: BookingPagination.fromJson(json['pagination'] ?? {}),
+      bookings: (json['bookings'] as List<dynamic>?)
+              ?.map((e) => Booking.fromJson(e))
+              .toList() ??
+          [],
+    );
+  }
+}

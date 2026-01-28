@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:bestseeds/screens/login_screens/login_screen.dart';
+import 'package:get/get.dart';
 import 'package:bestseeds/routes/app_routes.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+late SharedPreferences prefs;
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  prefs = await SharedPreferences.getInstance();
   runApp(const MyApp());
 }
 
@@ -11,7 +16,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return GetMaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'BestSeeds Driver',
       theme: ThemeData(
@@ -21,9 +26,8 @@ class MyApp extends StatelessWidget {
           seedColor: const Color(0xFF0077C8),
         ),
       ),
-      initialRoute: AppRoutes.login,
+      initialRoute: AppRoutes.splash,
       onGenerateRoute: AppRoutes.generateRoute,
-      home: const DriverLoginScreen(),
     );
   }
 }
