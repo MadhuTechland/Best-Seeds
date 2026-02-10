@@ -7,6 +7,9 @@ class DriverStorageService {
   static const _key = 'driver';
   static const _tokenKey = 'driver_token';
   static const _mobileKey = 'driver_mobile';
+  static const _locationLatKey = 'driver_location_lat';
+  static const _locationLngKey = 'driver_location_lng';
+  static const _locationAddressKey = 'driver_location_address';
 
   Future<void> saveDriver(Driver driver) async {
     await prefs.setString(_key, jsonEncode(driver.toJson()));
@@ -37,5 +40,35 @@ class DriverStorageService {
     await prefs.remove(_key);
     await prefs.remove(_tokenKey);
     await prefs.remove(_mobileKey);
+    await prefs.remove(_locationLatKey);
+    await prefs.remove(_locationLngKey);
+    await prefs.remove(_locationAddressKey);
+  }
+
+  Future<void> saveLocation({
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    await prefs.setDouble(_locationLatKey, latitude);
+    await prefs.setDouble(_locationLngKey, longitude);
+    await prefs.setString(_locationAddressKey, address);
+  }
+
+  double? getLocationLat() {
+    return prefs.getDouble(_locationLatKey);
+  }
+
+  double? getLocationLng() {
+    return prefs.getDouble(_locationLngKey);
+  }
+
+  String? getLocationAddress() {
+    return prefs.getString(_locationAddressKey);
+  }
+
+  bool hasLocation() {
+    return prefs.containsKey(_locationLatKey) &&
+        prefs.containsKey(_locationLngKey);
   }
 }

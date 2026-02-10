@@ -6,6 +6,31 @@ import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+/// Model for driver dropdown
+class DriverItem {
+  final int id;
+  final String name;
+  final String mobile;
+  final String displayName;
+
+  DriverItem({
+    required this.id,
+    required this.name,
+    required this.mobile,
+    required this.displayName,
+  });
+
+  factory DriverItem.fromJson(Map<String, dynamic> json) {
+    return DriverItem(
+      id: json['id'] ?? 0,
+      name: json['name'] ?? '',
+      mobile: json['mobile'] ?? '',
+      displayName:
+          json['display_name'] ?? '${json['name']} - ${json['mobile']}',
+    );
+  }
+}
+
 class EditHatcheryDetailsScreen extends StatefulWidget {
   final Booking booking;
 
@@ -69,8 +94,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
       text: widget.booking.vehicleDescription ?? '',
     );
 
-    // Initialize salinity from model
-    _selectedSalinity = widget.booking.salinity;
+    // Initialize salinity from model (only if value is in valid range 1-40)
+    final salinity = widget.booking.salinity;
+    _selectedSalinity = (salinity != null && salinity >= 1 && salinity <= 40) ? salinity : null;
 
     // Initialize dates from model
     if (widget.booking.preferredDate != null &&
@@ -810,13 +836,62 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
 
-    final TextEditingController driverNameController = TextEditingController();
-    final TextEditingController driverMobileController =
-        TextEditingController();
+    final existingDriver = widget.booking.driverDetails;
+    final bool isEditing = existingDriver.isAssigned;
+
+    // Pre-fill with existing data if editing
     final TextEditingController vehicleNumberController =
-        TextEditingController();
+        TextEditingController(text: isEditing ? existingDriver.vehicleNumber : '');
 
     bool isLoading = false;
+    bool isLoadingDrivers = true;
+    List<DriverItem> drivers = [];
+    DriverItem? selectedDriver;
+
+    // Pre-fill dates from existing driver data
+    DateTime? vehicleStartDate = isEditing && existingDriver.vehicleStartDate != null
+        ? DateTime.tryParse(existingDriver.vehicleStartDate!)
+        : null;
+    DateTime? vehicleEndDate = isEditing && existingDriver.vehicleEndDate != null
+        ? DateTime.tryParse(existingDriver.vehicleEndDate!)
+        : null;
+
+    // Pre-fill priority from existing driver data
+    int? selectedPriority = isEditing ? existingDriver.priority : null;
+
+    // Pre-fill location from existing driver data
+    double? vehicleStartLat = isEditing ? existingDriver.vehicleStartLat : null;
+    double? vehicleStartLng = isEditing ? existingDriver.vehicleStartLng : null;
+    String? vehicleStartAddress = isEditing ? existingDriver.vehicleStartAddress : null;
+
+    // Fetch drivers list
+    Future<void> fetchDrivers(StateSetter setModalState) async {
+      final token = _storage.getToken();
+      if (token == null) return;
+
+      try {
+        final response = await _repo.getDrivers(token: token);
+        if (response['status'] == true && response['drivers'] != null) {
+          drivers = (response['drivers'] as List)
+              .map((e) => DriverItem.fromJson(e))
+              .toList();
+
+          // Pre-select existing driver if editing
+          if (isEditing && existingDriver.driverId != null) {
+            for (final driver in drivers) {
+              if (driver.id == existingDriver.driverId) {
+                selectedDriver = driver;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        AppSnackbar.error('Failed to load drivers');
+      } finally {
+        setModalState(() => isLoadingDrivers = false);
+      }
+    }
 
     showModalBottomSheet(
       context: context,
@@ -825,8 +900,16 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
+            // Fetch drivers on first build
+            if (isLoadingDrivers && drivers.isEmpty) {
+              fetchDrivers(setModalState);
+            }
+
             return Container(
               margin: const EdgeInsets.only(top: 16),
+              constraints: BoxConstraints(
+                maxHeight: height * 0.85,
+              ),
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.only(
@@ -852,7 +935,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Change Driver',
+                          widget.booking.driverDetails.isAssigned
+                              ? 'Change Driver'
+                              : 'Add Driver',
                           style: TextStyle(
                             fontSize: width * 0.048,
                             fontWeight: FontWeight.bold,
@@ -883,30 +968,90 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                             _buildBookingInfoCard(width, height),
                             SizedBox(height: height * 0.03),
                             Text(
-                              'New Driver Details',
+                              'Driver Details',
                               style: TextStyle(
                                 fontSize: width * 0.042,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             SizedBox(height: height * 0.02),
-                            _buildBottomSheetTextField(
-                              width,
-                              height,
-                              'Driver Name',
-                              driverNameController,
-                              'Enter driver name',
+
+                            /// ================= Driver Dropdown =================
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Select Driver',
+                                  style: TextStyle(
+                                    fontSize: width * 0.038,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                SizedBox(height: height * 0.01),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: width * 0.04,
+                                    vertical: height * 0.005,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: isLoadingDrivers
+                                      ? Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: height * 0.015),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              height: 20,
+                                              width: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      : DropdownButtonHideUnderline(
+                                          child: DropdownButton<DriverItem>(
+                                            value: selectedDriver,
+                                            hint: Text(
+                                              'Select Driver',
+                                              style: TextStyle(
+                                                fontSize: width * 0.04,
+                                                color: Colors.grey.shade500,
+                                              ),
+                                            ),
+                                            isExpanded: true,
+                                            icon: Icon(
+                                              Icons.keyboard_arrow_down,
+                                              size: width * 0.06,
+                                              color: Colors.black,
+                                            ),
+                                            style: TextStyle(
+                                              fontSize: width * 0.04,
+                                              color: Colors.grey.shade700,
+                                            ),
+                                            items: drivers.map((driver) {
+                                              return DropdownMenuItem<
+                                                  DriverItem>(
+                                                value: driver,
+                                                child: Text(driver.displayName),
+                                              );
+                                            }).toList(),
+                                            onChanged: (value) {
+                                              setModalState(() {
+                                                selectedDriver = value;
+                                              });
+                                            },
+                                          ),
+                                        ),
+                                ),
+                              ],
                             ),
                             SizedBox(height: height * 0.025),
-                            _buildBottomSheetTextField(
-                              width,
-                              height,
-                              'Driver Mobile Number',
-                              driverMobileController,
-                              'Enter mobile number',
-                              TextInputType.phone,
-                            ),
-                            SizedBox(height: height * 0.025),
+
+                            /// ================= Vehicle Number =================
                             _buildBottomSheetTextField(
                               width,
                               height,
@@ -914,6 +1059,297 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                               vehicleNumberController,
                               'Enter vehicle number',
                             ),
+                            SizedBox(height: height * 0.025),
+
+                            /// ================= Priority =================
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Priority',
+                                  style: TextStyle(
+                                    fontSize: width * 0.038,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                SizedBox(height: height * 0.01),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: width * 0.04,
+                                    vertical: height * 0.005,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: DropdownButtonHideUnderline(
+                                    child: DropdownButton<int>(
+                                      value: selectedPriority,
+                                      hint: Text(
+                                        'Select Priority',
+                                        style: TextStyle(
+                                          fontSize: width * 0.04,
+                                          color: Colors.grey.shade500,
+                                        ),
+                                      ),
+                                      isExpanded: true,
+                                      icon: Icon(
+                                        Icons.keyboard_arrow_down,
+                                        size: width * 0.06,
+                                        color: Colors.black,
+                                      ),
+                                      style: TextStyle(
+                                        fontSize: width * 0.04,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                      items: List.generate(10, (index) {
+                                        final value = index + 1;
+                                        return DropdownMenuItem<int>(
+                                          value: value,
+                                          child: Text('$value'),
+                                        );
+                                      }),
+                                      onChanged: (value) {
+                                        setModalState(() {
+                                          selectedPriority = value;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: height * 0.025),
+
+                            /// ================= Vehicle Start Date =================
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Vehicle Start Date',
+                                  style: TextStyle(
+                                    fontSize: width * 0.038,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                SizedBox(height: height * 0.01),
+                                GestureDetector(
+                                  onTap: () async {
+                                    final picked = await showDatePicker(
+                                      context: context,
+                                      initialDate:
+                                          vehicleStartDate ?? DateTime.now(),
+                                      firstDate: DateTime.now(),
+                                      lastDate: DateTime.now()
+                                          .add(const Duration(days: 365)),
+                                      builder: (context, child) {
+                                        return Theme(
+                                          data: Theme.of(context).copyWith(
+                                            colorScheme:
+                                                const ColorScheme.light(
+                                              primary: Color(0xFF0077C8),
+                                              onPrimary: Colors.white,
+                                              onSurface: Colors.black,
+                                            ),
+                                          ),
+                                          child: child!,
+                                        );
+                                      },
+                                    );
+                                    if (picked != null) {
+                                      setModalState(() {
+                                        vehicleStartDate = picked;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: width * 0.04,
+                                      vertical: height * 0.018,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            vehicleStartDate != null
+                                                ? _formatDate(vehicleStartDate!)
+                                                : 'Select start date',
+                                            style: TextStyle(
+                                              fontSize: width * 0.04,
+                                              color: vehicleStartDate != null
+                                                  ? Colors.grey.shade700
+                                                  : Colors.grey.shade500,
+                                            ),
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.calendar_today,
+                                          size: width * 0.05,
+                                          color: const Color(0xFF0077C8),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: height * 0.025),
+
+                            /// ================= Vehicle End Date =================
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Vehicle End Date',
+                                  style: TextStyle(
+                                    fontSize: width * 0.038,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                SizedBox(height: height * 0.01),
+                                GestureDetector(
+                                  onTap: () async {
+                                    final picked = await showDatePicker(
+                                      context: context,
+                                      initialDate:
+                                          vehicleEndDate ?? DateTime.now(),
+                                      firstDate:
+                                          vehicleStartDate ?? DateTime.now(),
+                                      lastDate: DateTime.now()
+                                          .add(const Duration(days: 365)),
+                                      builder: (context, child) {
+                                        return Theme(
+                                          data: Theme.of(context).copyWith(
+                                            colorScheme:
+                                                const ColorScheme.light(
+                                              primary: Color(0xFF0077C8),
+                                              onPrimary: Colors.white,
+                                              onSurface: Colors.black,
+                                            ),
+                                          ),
+                                          child: child!,
+                                        );
+                                      },
+                                    );
+                                    if (picked != null) {
+                                      setModalState(() {
+                                        vehicleEndDate = picked;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: width * 0.04,
+                                      vertical: height * 0.018,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            vehicleEndDate != null
+                                                ? _formatDate(vehicleEndDate!)
+                                                : 'Select end date',
+                                            style: TextStyle(
+                                              fontSize: width * 0.04,
+                                              color: vehicleEndDate != null
+                                                  ? Colors.grey.shade700
+                                                  : Colors.grey.shade500,
+                                            ),
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.calendar_today,
+                                          size: width * 0.05,
+                                          color: const Color(0xFF0077C8),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: height * 0.025),
+
+                            /// ================= Vehicle Start Location =================
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Vehicle Start Location',
+                                  style: TextStyle(
+                                    fontSize: width * 0.038,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                SizedBox(height: height * 0.01),
+                                GestureDetector(
+                                  onTap: () async {
+                                    final result = await LocationSelector.show(
+                                      context: context,
+                                      initialLatitude: vehicleStartLat,
+                                      initialLongitude: vehicleStartLng,
+                                    );
+
+                                    if (result != null) {
+                                      setModalState(() {
+                                        vehicleStartLat = result.latitude;
+                                        vehicleStartLng = result.longitude;
+                                        vehicleStartAddress = result.address;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: width * 0.04,
+                                      vertical: height * 0.018,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            vehicleStartAddress != null &&
+                                                    vehicleStartAddress!
+                                                        .isNotEmpty
+                                                ? vehicleStartAddress!
+                                                : 'Select start location',
+                                            style: TextStyle(
+                                              fontSize: width * 0.04,
+                                              color: vehicleStartAddress != null
+                                                  ? Colors.grey.shade700
+                                                  : Colors.grey.shade500,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.location_on,
+                                          size: width * 0.06,
+                                          color: const Color(0xFF0077C8),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: height * 0.02),
                           ],
                         ),
                       ),
@@ -939,11 +1375,14 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                         onPressed: isLoading
                             ? null
                             : () async {
-                                if (driverNameController.text.isEmpty ||
-                                    driverMobileController.text.isEmpty ||
-                                    vehicleNumberController.text.isEmpty) {
+                                if (selectedDriver == null) {
+                                  AppSnackbar.error('Please select a driver');
+                                  return;
+                                }
+
+                                if (vehicleNumberController.text.isEmpty) {
                                   AppSnackbar.error(
-                                      'Please fill all driver details');
+                                      'Please enter vehicle number');
                                   return;
                                 }
 
@@ -961,13 +1400,24 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                   await _repo.changeDriver(
                                     token: token,
                                     bookingId: widget.booking.bookingId,
-                                    driverName: driverNameController.text,
-                                    driverMobile: driverMobileController.text,
+                                    driverId: selectedDriver!.id,
+                                    driverName: selectedDriver!.name,
+                                    driverMobile: selectedDriver!.mobile,
                                     vehicleNumber: vehicleNumberController.text,
+                                    vehicleStartDate: vehicleStartDate != null
+                                        ? _formatDateForApi(vehicleStartDate!)
+                                        : null,
+                                    vehicleEndDate: vehicleEndDate != null
+                                        ? _formatDateForApi(vehicleEndDate!)
+                                        : null,
+                                    vehicleStartLat: vehicleStartLat,
+                                    vehicleStartLng: vehicleStartLng,
+                                    vehicleStartAddress: vehicleStartAddress,
+                                    priority: selectedPriority,
                                   );
 
                                   AppSnackbar.success(
-                                      'Driver changed successfully');
+                                      'Driver assigned successfully');
                                   if (context.mounted) {
                                     Navigator.pop(
                                         context); // Close bottom sheet
@@ -1000,7 +1450,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                 ),
                               )
                             : Text(
-                                'Change Driver',
+                                widget.booking.driverDetails.isAssigned
+                                    ? 'Change Driver'
+                                    : 'Add Driver',
                                 style: TextStyle(
                                   fontSize: width * 0.045,
                                   fontWeight: FontWeight.bold,
@@ -1038,47 +1490,91 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
               style: TextStyle(
                   fontSize: width * 0.042, fontWeight: FontWeight.bold),
             ),
-            SizedBox(
-              height: height * 0.015,
-            ),
+            SizedBox(height: height * 0.015),
             _buildDriverRow('Name', driver.name, width),
             _buildDriverRow('Driver Mobile', driver.mobile, width),
-            _buildDriverRow('Vehicle Number', driver.vehicleNumber, width)
+            _buildDriverRow('Vehicle Number', driver.vehicleNumber, width),
+            if (driver.vehicleStartDate != null &&
+                driver.vehicleStartDate!.isNotEmpty)
+              _buildDriverRow('Vehicle Start Date',
+                  _formatDisplayDate(driver.vehicleStartDate!), width),
+            if (driver.vehicleEndDate != null &&
+                driver.vehicleEndDate!.isNotEmpty)
+              _buildDriverRow('Vehicle End Date',
+                  _formatDisplayDate(driver.vehicleEndDate!), width),
+            if (driver.vehicleStartAddress != null &&
+                driver.vehicleStartAddress!.isNotEmpty)
+              _buildDriverRow(
+                  'Start Location', driver.vehicleStartAddress!, width),
           ],
         ),
       ),
+      // Edit and Delete buttons
       Positioned(
         top: 10,
         right: 10,
-        child: GestureDetector(
-          onTap: _isRemovingDriver
-              ? null
-              : () {
-                  _confirmRemoveDriver();
-                },
-          child: Container(
-            padding: EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Colors.red.shade50,
-              shape: BoxShape.circle,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Edit button
+            GestureDetector(
+              onTap: () => _showChangeDriverBottomSheet(context),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.edit_outlined,
+                  color: Colors.blue,
+                  size: width * 0.055,
+                ),
+              ),
             ),
-            child: _isRemovingDriver
-                ? SizedBox(
-                    height: height * 0.045,
-                    width: width * 0.045,
-                    child: const CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  )
-                : Icon(
-                    Icons.delete_outline,
-                    color: Colors.red,
-                    size: width * 0.055,
-                  ),
-          ),
+            SizedBox(width: width * 0.02),
+            // Delete button
+            GestureDetector(
+              onTap: _isRemovingDriver
+                  ? null
+                  : () {
+                      _confirmRemoveDriver();
+                    },
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: _isRemovingDriver
+                    ? SizedBox(
+                        height: width * 0.045,
+                        width: width * 0.045,
+                        child: const CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Icon(
+                        Icons.delete_outline,
+                        color: Colors.red,
+                        size: width * 0.055,
+                      ),
+              ),
+            ),
+          ],
         ),
       ),
     ]);
+  }
+
+  String _formatDisplayDate(String dateString) {
+    try {
+      final date = DateTime.tryParse(dateString);
+      if (date != null) {
+        return DateFormat('dd/MM/yyyy').format(date);
+      }
+    } catch (_) {}
+    return dateString;
   }
 
   void _confirmRemoveDriver() {

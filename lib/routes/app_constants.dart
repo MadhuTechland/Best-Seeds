@@ -11,6 +11,7 @@ class AppConstants {
   static String employeeSetNewPasswordApi = "vendor/set-new-password";
   static String employeeUpdateProfileApi = "vendor/update-profile";
   static String employeeProfileApi = "vendor/profile";
+  static String employeeUpdateLocationApi = "vendor/update-location";
 
   // Employee Booking APIs
   static String employeeBookingsApi = "vendor/bookings";
@@ -20,6 +21,7 @@ class AppConstants {
   static String employeeChangeDriverApi = "vendor/bookings"; // /{bookingId}/change-driver
   static String employeeRemoveDriverApi = "vendor/bookings"; // /{bookingId}/remove-driver
   static String employeeAddDriverApi = "vendor/bookings"; // /{bookingId}/add-driver
+  static String employeeGetDriversApi = "vendor/drivers"; // GET list of drivers
 
   // Driver APIs
   static String driverLoginApi = "driver/login";
@@ -32,4 +34,5 @@ class AppConstants {
   static String driverStartJourneyApi = "driver/start-journey";
   static String driverUpdateDropStatusApi = "driver/update-drop-status";
   static String driverLocationUpdateApi = "driver/location/update";
+  static String driverUpdateCurrentLocationApi = "driver/update-location";
 }

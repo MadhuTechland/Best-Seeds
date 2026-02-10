@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:bestseeds/employee/models/booking_model.dart';
 import 'package:bestseeds/utils/custom_marker_helper.dart';
 import 'package:bestseeds/utils/google_maps_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
@@ -483,6 +485,11 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen> {
           myLocationButtonEnabled: false,
           zoomControlsEnabled: true,
           mapToolbarEnabled: true,
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(
+              () => EagerGestureRecognizer(),
+            ),
+          },
           padding: EdgeInsets.only(
             bottom: height * 0.16, // space for Last Update card
             right: width * 0.02,
@@ -725,6 +732,11 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen> {
                 zoomGesturesEnabled: true,
                 rotateGesturesEnabled: true,
                 tiltGesturesEnabled: true,
+                gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(
+                    () => EagerGestureRecognizer(),
+                  ),
+                },
                 onMapCreated: (GoogleMapController controller) {
                   _smallMapController = controller;
                   // Fit to show all markers after map is created

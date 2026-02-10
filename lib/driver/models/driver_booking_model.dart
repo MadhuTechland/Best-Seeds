@@ -1,11 +1,37 @@
+/// Counts for driver booking tabs
+class DriverBookingCounts {
+  final int all;
+  final int live;
+  final int assigned;
+  final int past;
+
+  DriverBookingCounts({
+    required this.all,
+    required this.live,
+    required this.assigned,
+    required this.past,
+  });
+
+  factory DriverBookingCounts.fromJson(Map<String, dynamic> json) {
+    return DriverBookingCounts(
+      all: json['all'] ?? 0,
+      live: json['live'] ?? 0,
+      assigned: json['assigned'] ?? 0,
+      past: json['past'] ?? 0,
+    );
+  }
+}
+
 /// Response model for driver bookings API
 class DriverBookingResponse {
   final bool status;
   final List<DriverRoute> routes;
+  final DriverBookingCounts counts;
 
   DriverBookingResponse({
     required this.status,
     required this.routes,
+    required this.counts,
   });
 
   factory DriverBookingResponse.fromJson(Map<String, dynamic> json) {
@@ -15,6 +41,7 @@ class DriverBookingResponse {
               ?.map((e) => DriverRoute.fromJson(e))
               .toList() ??
           [],
+      counts: DriverBookingCounts.fromJson(json['counts'] ?? {}),
     );
   }
 }
@@ -45,8 +72,8 @@ class DriverRoute {
 
   factory DriverRoute.fromJson(Map<String, dynamic> json) {
     return DriverRoute(
-      packingDate: json['packing_date'] != null
-          ? DateTime.tryParse(json['packing_date'])
+      packingDate: json['vehicle_started_date'] != null
+          ? DateTime.tryParse(json['vehicle_started_date'])
           : null,
       startLocation: json['start_location'] != null
           ? StartLocation.fromJson(json['start_location'])
@@ -105,6 +132,8 @@ class DriverRoute {
   /// Check if all bookings are completed (status 5)
   bool get isCompleted => bookings.every((b) => b.status == 5);
 
+  bool get isFailed => bookings.every((b) => b.status == 6);
+
   /// Get the overall status of the route based on bookings
   int get routeStatus {
     if (bookings.isEmpty) return 0;
@@ -120,6 +149,22 @@ class DriverRoute {
 
     // Default to the first booking's status
     return bookings.first.status;
+  }
+
+  /// Get comma-separated booking IDs (e.g., "217, 218")
+  String get bookingIdsString {
+    if (bookings.isEmpty) return 'N/A';
+    return bookings.map((b) => b.id.toString()).join(', ');
+  }
+
+  /// Get the first available delivery datetime from bookings
+  DateTime? get firstDeliveryDatetime {
+    for (final booking in bookings) {
+      if (booking.deliveryDatetime != null) {
+        return booking.deliveryDatetime;
+      }
+    }
+    return null;
   }
 }
 
@@ -171,6 +216,8 @@ class DropBooking {
   final double? dropLat;
   final double? dropLng;
   final String? deliveryNote;
+  final DateTime? deliveryDatetime;
+  final int? priority;
 
   DropBooking({
     required this.id,
@@ -183,6 +230,8 @@ class DropBooking {
     this.dropLat,
     this.dropLng,
     this.deliveryNote,
+    this.deliveryDatetime,
+    this.priority,
   });
 
   factory DropBooking.fromJson(Map<String, dynamic> json) {
@@ -197,6 +246,10 @@ class DropBooking {
       dropLat: _parseDouble(json['drop_lat']),
       dropLng: _parseDouble(json['drop_lng']),
       deliveryNote: json['delivery_note'],
+      deliveryDatetime: json['delivery_datetime'] != null
+          ? DateTime.tryParse(json['delivery_datetime'])
+          : null,
+      priority: json['priority'],
     );
   }
 

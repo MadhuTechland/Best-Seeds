@@ -3,6 +3,8 @@ import 'package:bestseeds/driver/repository/driver_auth_repository.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/login_location_screen.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class DriverAuthController extends GetxController {
@@ -24,9 +26,15 @@ class DriverAuthController extends GetxController {
       mobile.value = phoneNumber;
       await _storage.saveMobile(phoneNumber);
 
-      AppSnackbar.success(
-        result['message'] ?? 'OTP sent successfully',
-      );
+      // Check if it's existing OTP (already sent within 2 minutes)
+      final isExistingOtp = result['existing_otp'] == true;
+
+      if (isExistingOtp) {
+        AppSnackbar.info('OTP', result['message'] ?? 'OTP already sent. Check your SMS.');
+      } else {
+        AppSnackbar.success(result['message'] ?? 'OTP sent successfully');
+      }
+
       Get.toNamed(AppRoutes.driverOtpVerification);
     } catch (e) {
       print('Controller ERROR: $e');
@@ -45,9 +53,38 @@ class DriverAuthController extends GetxController {
       print('Controller: OTP verified, driver=${driver.name}');
 
       await _storage.saveDriver(driver);
-      print('Controller: Driver saved, navigating to home');
+      print('Controller: Driver saved, navigating to location setup');
 
-      Get.offAllNamed(AppRoutes.driverHome);
+      // Navigate to location setup screen
+      Get.offAll(() => LoginLocationScreen(
+            userType: 'driver',
+            onLocationSelected: (location) async {
+              // Save location to local storage
+              await _storage.saveLocation(
+                latitude: location.latitude,
+                longitude: location.longitude,
+                address: location.address,
+              );
+              print('Controller: Location saved locally');
+
+              // Save location to backend
+              try {
+                await _repo.updateCurrentLocation(
+                  token: driver.token,
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  address: location.address,
+                );
+                print('Controller: Location saved to backend');
+              } catch (e) {
+                print('Controller: Failed to save location to backend: $e');
+              }
+
+              print('Controller: Navigating to home');
+              // Navigate to home
+              Get.offAllNamed(AppRoutes.driverHome);
+            },
+          ));
     } catch (e) {
       print('Controller ERROR: $e');
       AppSnackbar.error(extractErrorMessage(e));
@@ -77,7 +114,7 @@ class DriverAuthController extends GetxController {
   }
 
   void startResendTimer() {
-    resendTimer.value = 30;
+    resendTimer.value = 120; // 2 minutes
     Future.doWhile(() async {
       await Future.delayed(const Duration(seconds: 1));
       if (resendTimer.value > 0) {

@@ -1,27 +1,54 @@
 import 'package:bestseeds/driver/controllers/driver_auth_controller.dart';
 import 'package:bestseeds/employee/screens/login_screens/employee_login_screen.dart';
-import 'package:bestseeds/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
-class DriverLoginScreen extends StatelessWidget {
-  DriverLoginScreen({super.key});
+class DriverLoginScreen extends StatefulWidget {
+  const DriverLoginScreen({super.key});
 
+  @override
+  State<DriverLoginScreen> createState() => _DriverLoginScreenState();
+}
+
+class _DriverLoginScreenState extends State<DriverLoginScreen> {
   final DriverAuthController controller = Get.put(DriverAuthController());
   final mobileCtrl = TextEditingController();
 
+  // Track if mobile number is valid (10 digits)
+  bool _isValidMobile = false;
+
+  @override
+  void initState() {
+    super.initState();
+    mobileCtrl.addListener(_onMobileChanged);
+  }
+
+  @override
+  void dispose() {
+    mobileCtrl.removeListener(_onMobileChanged);
+    mobileCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onMobileChanged() {
+    final isValid = mobileCtrl.text.length == 10;
+    if (isValid != _isValidMobile) {
+      setState(() {
+        _isValidMobile = isValid;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final width = media.size.width;
-    final height = media.size.height;
+    final width = MediaQuery.of(context).size.width;
+    final height = MediaQuery.of(context).size.height;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: Container(
         width: width,
-        height: height,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
@@ -33,14 +60,10 @@ class DriverLoginScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: height -
-                    MediaQuery.of(context).padding.top -
-                    MediaQuery.of(context).padding.bottom,
-              ),
-              child: IntrinsicHeight(
+          child: CustomScrollView(
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
                 child: Column(
                   children: [
                     Padding(
@@ -52,7 +75,8 @@ class DriverLoginScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Login as Driver',
@@ -112,7 +136,7 @@ class DriverLoginScreen extends StatelessWidget {
                       child: Center(
                         child: Image.asset(
                           'assets/images/login_truck.png',
-                          width: width * 1,
+                          width: width,
                           fit: BoxFit.contain,
                         ),
                       ),
@@ -143,9 +167,11 @@ class DriverLoginScreen extends StatelessWidget {
                           ),
                           SizedBox(height: height * 0.025),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12),
                             decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
+                              border:
+                                  Border.all(color: Colors.grey.shade300),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -164,7 +190,8 @@ class DriverLoginScreen extends StatelessWidget {
                                     keyboardType: TextInputType.phone,
                                     maxLength: 10,
                                     inputFormatters: [
-                                      FilteringTextInputFormatter.digitsOnly,
+                                      FilteringTextInputFormatter
+                                          .digitsOnly,
                                     ],
                                     decoration: const InputDecoration(
                                       hintText: 'Enter Mobile Number',
@@ -181,31 +208,40 @@ class DriverLoginScreen extends StatelessWidget {
                                 width: double.infinity,
                                 height: height * 0.06,
                                 child: ElevatedButton(
-                                  onPressed: controller.isLoading.value
-                                      ? null
-                                      : () {
-                                          final mobile = mobileCtrl.text.trim();
-                                          if (mobile.length != 10) {
-                                              AppSnackbar.error('Please enter a valid 10-digit mobile number');
-                                            return;
-                                          }
-                                          controller.sendOtp(mobile);
-                                        },
+                                  onPressed:
+                                      controller.isLoading.value ||
+                                              !_isValidMobile
+                                          ? null
+                                          : () {
+                                              final mobile =
+                                                  mobileCtrl.text.trim();
+                                              controller.sendOtp(mobile);
+                                            },
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF0077C8),
+                                    backgroundColor: _isValidMobile
+                                        ? const Color(0xFF0077C8)
+                                        : const Color(0xFF0077C8)
+                                            .withValues(alpha: 0.4),
+                                    disabledBackgroundColor:
+                                        const Color(0xFF0077C8)
+                                            .withValues(alpha: 0.4),
                                     shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius:
+                                          BorderRadius.circular(14),
                                     ),
                                   ),
                                   child: controller.isLoading.value
                                       ? const CircularProgressIndicator(
                                           color: Colors.white)
-                                      : const Text(
+                                      : Text(
                                           'Continue',
                                           style: TextStyle(
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold,
-                                            color: Colors.white,
+                                            color: _isValidMobile
+                                                ? Colors.white
+                                                : Colors.white.withValues(
+                                                    alpha: 0.7),
                                           ),
                                         ),
                                 ),
@@ -227,7 +263,7 @@ class DriverLoginScreen extends StatelessWidget {
                   ],
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

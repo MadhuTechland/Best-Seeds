@@ -3,6 +3,41 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 class ApiClient {
+  /// Extracts error message from Laravel API response
+  /// Handles various error formats:
+  /// - {"message": "Error"} - simple message
+  /// - {"errors": {"field": ["Error message"]}} - validation errors
+  /// - {"error": "Error"} - alternative format
+  String _extractErrorFromResponse(Map<String, dynamic> data) {
+    // Check for 'message' field first
+    if (data['message'] != null && data['message'].toString().isNotEmpty) {
+      return data['message'].toString();
+    }
+
+    // Check for Laravel validation errors format
+    if (data['errors'] != null && data['errors'] is Map) {
+      final errors = data['errors'] as Map;
+      if (errors.isNotEmpty) {
+        // Get the first error message from the first field
+        final firstFieldErrors = errors.values.first;
+        if (firstFieldErrors is List && firstFieldErrors.isNotEmpty) {
+          return firstFieldErrors.first.toString();
+        }
+        // If it's a string directly
+        if (firstFieldErrors is String) {
+          return firstFieldErrors;
+        }
+      }
+    }
+
+    // Check for 'error' field
+    if (data['error'] != null && data['error'].toString().isNotEmpty) {
+      return data['error'].toString();
+    }
+
+    return 'Something went wrong';
+  }
+
   Future<Map<String, dynamic>> request({
     required String url,
     required Map<String, dynamic> body,
@@ -62,7 +97,9 @@ class ApiClient {
       return data;
     } else {
       print('API CLIENT ERROR: $data');
-      throw Exception(data['message'] ?? 'Something went wrong');
+      final errorMessage = _extractErrorFromResponse(data);
+      print('API CLIENT: Extracted Error Message -> $errorMessage');
+      throw Exception(errorMessage);
     }
   }
 
@@ -105,7 +142,9 @@ class ApiClient {
       return data;
     } else {
       print('API CLIENT MULTIPART ERROR: $data');
-      throw Exception(data['message'] ?? 'Something went wrong');
+      final errorMessage = _extractErrorFromResponse(data);
+      print('API CLIENT MULTIPART: Extracted Error Message -> $errorMessage');
+      throw Exception(errorMessage);
     }
   }
 }

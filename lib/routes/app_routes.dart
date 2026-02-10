@@ -20,6 +20,8 @@ class AppRoutes {
   static const driverOtpVerification = '/driverOtpVerification';
   static const employeeEditProfile = '/employeeEditProfile';
   static const driverEditProfile = '/driverEditProfile';
+  static const driverLocationSetup = '/driverLocationSetup';
+  static const employeeLocationSetup = '/employeeLocationSetup';
 
   static Route<dynamic> generateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -27,10 +29,10 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => const SplashScreen());
 
       case login:
-        return MaterialPageRoute(builder: (_) => DriverLoginScreen());
+        return MaterialPageRoute(builder: (_) => const DriverLoginScreen());
 
       case employeeLogin:
-        return MaterialPageRoute(builder: (_) => EmployeeLoginScreen());
+        return MaterialPageRoute(builder: (_) => const EmployeeLoginScreen());
 
       case driverHome:
         return MaterialPageRoute(
@@ -46,7 +48,7 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => SetPasswordScreen());
 
       case driverOtpVerification:
-        return MaterialPageRoute(builder: (_) => OtpVerificationScreen());
+        return MaterialPageRoute(builder: (_) => const OtpVerificationScreen());
 
       case employeeEditProfile:
         return MaterialPageRoute(

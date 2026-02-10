@@ -8,11 +8,22 @@ class HelpScreen extends StatelessWidget {
 
   Future<void> _openWhatsApp() async {
     // Replace with your actual WhatsApp number
-    const phoneNumber = '+918431148811';
+    const phoneNumber = '918431148811'; // Without + for WhatsApp URL
     final whatsappUrl = Uri.parse('https://wa.me/$phoneNumber');
 
-    if (await canLaunchUrl(whatsappUrl)) {
-      await launchUrl(whatsappUrl, mode: LaunchMode.externalApplication);
+    try {
+      // Try launching directly - canLaunchUrl may return false on Android 11+
+      final launched = await launchUrl(
+        whatsappUrl,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        // Fallback: try with whatsapp:// scheme
+        final fallbackUrl = Uri.parse('whatsapp://send?phone=$phoneNumber');
+        await launchUrl(fallbackUrl, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      debugPrint('Error opening WhatsApp: $e');
     }
   }
 
@@ -21,8 +32,10 @@ class HelpScreen extends StatelessWidget {
     const phoneNumber = '+918431148811';
     final phoneUrl = Uri.parse('tel:$phoneNumber');
 
-    if (await canLaunchUrl(phoneUrl)) {
+    try {
       await launchUrl(phoneUrl);
+    } catch (e) {
+      debugPrint('Error making phone call: $e');
     }
   }
 

@@ -22,6 +22,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   final DriverStorageService _storage = DriverStorageService();
   final DriverAuthRepository _repo = DriverAuthRepository();
   Driver? _driver;
+  String? _locationAddress;
 
   List<DriverRoute> _allRoutes = [];
   List<DriverRoute> _filteredRoutes = [];
@@ -29,6 +30,18 @@ class _DriverDashboardState extends State<DriverDashboard> {
   String? _errorMessage;
 
   final TextEditingController _searchController = TextEditingController();
+
+  // Counts from backend
+  int _allCount = 0;
+  int _liveCount = 0;
+  int _assignedCount = 0;
+  int _pastCount = 0;
+
+  // Filter options
+  String? _selectedBookingType; // hatchery, spot
+
+  // Tab scroll controller
+  final ScrollController _tabScrollController = ScrollController();
 
   // Status constants
   // 1 = accept/reject (New booking)
@@ -38,16 +51,27 @@ class _DriverDashboardState extends State<DriverDashboard> {
   // 5 = completed (Delivered)
   // 6 = cancelled
 
+  bool get _hasActiveFilters => _selectedBookingType != null;
+
   @override
   void initState() {
     super.initState();
     _loadDriver();
+    _loadLocation();
     _fetchBookings();
+  }
+
+  void _loadLocation() {
+    final address = _storage.getLocationAddress();
+    setState(() {
+      _locationAddress = address;
+    });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _tabScrollController.dispose();
     super.dispose();
   }
 
@@ -77,6 +101,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
       final response = await _repo.getBookings(token);
       setState(() {
         _allRoutes = response.routes;
+        // Store counts from backend
+        _allCount = response.counts.all;
+        _liveCount = response.counts.live;
+        _assignedCount = response.counts.assigned;
+        _pastCount = response.counts.past;
         _filterRoutes();
         _isLoading = false;
       });
@@ -100,14 +129,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
         break;
       case 1: // Live (routes with status 3 or 4)
         filtered = _allRoutes
-            .where((r) => r.routeStatus == 3 || r.routeStatus == 4)
+            .where((r) => r.routeStatus == 4)
             .toList();
         break;
       case 2: // Assigned Bookings (status 3 - confirmed, waiting to start)
         filtered = _allRoutes.where((r) => r.routeStatus == 3).toList();
         break;
       case 3: // Past Bookings (status 5 - completed)
-        filtered = _allRoutes.where((r) => r.isCompleted).toList();
+        filtered = _allRoutes.where((r) => r.isCompleted || r.isFailed).toList();
         break;
       default:
         filtered = _allRoutes;
@@ -126,6 +155,20 @@ class _DriverDashboardState extends State<DriverDashboard> {
       }).toList();
     }
 
+    // Apply booking type filter
+    if (_selectedBookingType != null) {
+      filtered = filtered.where((route) {
+        // Check if route's hatchery matches the selected booking type
+        // This is a simplified check - you may need to adjust based on actual data structure
+        if (_selectedBookingType == 'spot') {
+          return route.hatcheryName.toLowerCase().contains('spot');
+        } else if (_selectedBookingType == 'hatchery') {
+          return !route.hatcheryName.toLowerCase().contains('spot');
+        }
+        return true;
+      }).toList();
+    }
+
     setState(() {
       _filteredRoutes = filtered;
     });
@@ -133,8 +176,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
   int _getTabCount(int tabIndex) {
     switch (tabIndex) {
+      case 0: // All
+        return _allCount;
+      case 1: // Live
+        return _liveCount;
       case 2: // Assigned Bookings
-        return _allRoutes.where((r) => r.routeStatus == 3).length;
+        return _assignedCount;
+      case 3: // Past
+        return _pastCount;
       default:
         return 0;
     }
@@ -180,14 +229,42 @@ class _DriverDashboardState extends State<DriverDashboard> {
       color: Colors.white,
       child: Row(
         children: [
-          Text(
-            'Hello, $firstName',
-            style: TextStyle(
-              fontSize: width * 0.055,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Hello, $firstName',
+                  style: TextStyle(
+                    fontSize: width * 0.055,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (_locationAddress != null && _locationAddress!.isNotEmpty)
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.location_on,
+                        size: width * 0.04,
+                        color: const Color(0xFF0077C8),
+                      ),
+                      SizedBox(width: width * 0.01),
+                      Expanded(
+                        child: Text(
+                          _locationAddress!,
+                          style: TextStyle(
+                            fontSize: width * 0.032,
+                            color: Colors.grey.shade600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
             ),
           ),
-          const Spacer(),
           _buildHeaderIcon(
             size: width * 0.12,
             assetPath: 'assets/icons/translate.png',
@@ -274,52 +351,245 @@ class _DriverDashboardState extends State<DriverDashboard> {
     return Container(
       padding: EdgeInsets.symmetric(horizontal: width * 0.05),
       color: Colors.white,
-      child: Container(
-        margin: EdgeInsets.only(bottom: height * 0.015),
-        padding: EdgeInsets.symmetric(horizontal: width * 0.04),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.search,
-              color: Colors.grey.shade500,
-              size: width * 0.055,
-            ),
-            SizedBox(width: width * 0.03),
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                onChanged: (value) => _filterRoutes(),
-                decoration: InputDecoration(
-                  hintText: 'Search Bookings',
-                  hintStyle: TextStyle(
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              margin: EdgeInsets.only(bottom: height * 0.015),
+              padding: EdgeInsets.symmetric(horizontal: width * 0.04),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.search,
                     color: Colors.grey.shade500,
-                    fontSize: width * 0.04,
+                    size: width * 0.055,
                   ),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
-                    vertical: height * 0.015,
+                  SizedBox(width: width * 0.03),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (value) => _filterRoutes(),
+                      decoration: InputDecoration(
+                        hintText: 'Search Bookings',
+                        hintStyle: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: width * 0.04,
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: height * 0.015,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  if (_searchController.text.isNotEmpty)
+                    GestureDetector(
+                      onTap: () {
+                        _searchController.clear();
+                        _filterRoutes();
+                      },
+                      child: Icon(
+                        Icons.close,
+                        color: Colors.grey,
+                        size: width * 0.05,
+                      ),
+                    ),
+                ],
               ),
             ),
-            if (_searchController.text.isNotEmpty)
-              GestureDetector(
-                onTap: () {
-                  _searchController.clear();
-                  _filterRoutes();
-                },
-                child: Icon(
-                  Icons.close,
-                  color: Colors.grey,
-                  size: width * 0.05,
+          ),
+          SizedBox(width: width * 0.03),
+          GestureDetector(
+            onTap: _showFilterDialog,
+            child: Container(
+              margin: EdgeInsets.only(bottom: height * 0.015),
+              padding: EdgeInsets.all(width * 0.03),
+              decoration: BoxDecoration(
+                color: _hasActiveFilters ? const Color(0xFF0077C8) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Stack(
+                children: [
+                  Icon(
+                    Icons.filter_list,
+                    color: _hasActiveFilters ? Colors.white : Colors.grey.shade700,
+                    size: width * 0.06,
+                  ),
+                  if (_hasActiveFilters)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showFilterDialog() {
+    final width = MediaQuery.of(context).size.width;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
                 ),
               ),
-          ],
+              padding: EdgeInsets.all(width * 0.05),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Filters',
+                        style: TextStyle(
+                          fontSize: width * 0.05,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setModalState(() {
+                            _selectedBookingType = null;
+                          });
+                        },
+                        child: Text(
+                          'Clear All',
+                          style: TextStyle(
+                            color: const Color(0xFF0077C8),
+                            fontSize: width * 0.04,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: width * 0.04),
+
+                  // Booking Type Filter
+                  Text(
+                    'Booking Type',
+                    style: TextStyle(
+                      fontSize: width * 0.042,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: width * 0.02),
+                  Wrap(
+                    spacing: width * 0.02,
+                    children: [
+                      _buildFilterChip(
+                        label: 'All',
+                        isSelected: _selectedBookingType == null,
+                        onTap: () => setModalState(() => _selectedBookingType = null),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Spot Hatchery',
+                        isSelected: _selectedBookingType == 'spot',
+                        onTap: () => setModalState(() => _selectedBookingType = 'spot'),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Hatchery',
+                        isSelected: _selectedBookingType == 'hatchery',
+                        onTap: () => setModalState(() => _selectedBookingType = 'hatchery'),
+                        width: width,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: width * 0.06),
+
+                  // Apply Button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        _filterRoutes();
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0077C8),
+                        padding: EdgeInsets.symmetric(vertical: width * 0.04),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Apply Filters',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: width * 0.045,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: width * 0.02),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+    required double width,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: width * 0.04,
+          vertical: width * 0.025,
+        ),
+        margin: EdgeInsets.only(bottom: width * 0.02),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF0077C8) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF0077C8) : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontSize: width * 0.035,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ),
         ),
       ),
     );
@@ -327,16 +597,17 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
   Widget _buildTabBar(double width, double height) {
     final tabs = [
-      {'label': 'All', 'showDot': false, 'showCount': false},
-      {'label': 'Live', 'showDot': true, 'showCount': false},
-      {'label': 'Assigned Bookings', 'showDot': false, 'showCount': true},
-      {'label': 'Past Bookings', 'showDot': false, 'showCount': false},
+      {'label': 'All', 'showDot': false},
+      {'label': 'Live', 'showDot': true},
+      {'label': 'Assigned', 'showDot': false},
+      {'label': 'Past', 'showDot': false},
     ];
 
     return Container(
       height: height * 0.055,
       color: Colors.white,
       child: ListView.builder(
+        controller: _tabScrollController,
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.symmetric(horizontal: width * 0.03),
         itemCount: tabs.length,
@@ -351,6 +622,29 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 selectedTabIndex = index;
               });
               _filterRoutes();
+              // Simple scroll logic for 4 tabs
+              // if (_tabScrollController.hasClients) {
+              //   final maxScroll = _tabScrollController.position.maxScrollExtent;
+              //   if (maxScroll > 0) {
+              //     // Only scroll if content is scrollable
+              //     if (index == 0) {
+              //       // First tab - scroll to start
+              //       _tabScrollController.animateTo(
+              //         0,
+              //         duration: const Duration(milliseconds: 200),
+              //         curve: Curves.easeOut,
+              //       );
+              //     } else if (index == tabs.length - 1) {
+              //       // Last tab - scroll to end
+              //       _tabScrollController.animateTo(
+              //         maxScroll,
+              //         duration: const Duration(milliseconds: 200),
+              //         curve: Curves.easeOut,
+              //       );
+              //     }
+              //     // Middle tabs don't need scrolling - they're already visible
+              //   }
+              // }
             },
             child: Container(
               margin: EdgeInsets.symmetric(
@@ -393,7 +687,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                           isSelected ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
-                  if (tab['showCount'] == true && count > 0) ...[
+                  if (count > 0) ...[
                     SizedBox(width: width * 0.015),
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -561,15 +855,19 @@ class _DriverDashboardState extends State<DriverDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                /// ID Row
+                /// Booking IDs Row
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'ID:${route.hatcheryId ?? 'N/A'}',
-                      style: TextStyle(
-                        fontSize: width * 0.038,
-                        fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Text(
+                        'ID: ${route.bookingIdsString}',
+                        style: TextStyle(
+                          fontSize: width * 0.038,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     Text(
@@ -583,13 +881,42 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 ),
                 SizedBox(height: height * 0.012),
 
-                /// Hatchery Name
-                Text(
-                  route.hatcheryName,
-                  style: TextStyle(
-                    fontSize: width * 0.042,
-                    fontWeight: FontWeight.bold,
-                  ),
+                /// Hatchery Name with Delivery Date
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        route.hatcheryName,
+                        style: TextStyle(
+                          fontSize: width * 0.042,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    if (route.firstDeliveryDatetime != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            DateFormat('dd MMM yyyy').format(route.firstDeliveryDatetime!),
+                            style: TextStyle(
+                              fontSize: width * 0.032,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF0077C8),
+                            ),
+                          ),
+                          Text(
+                            DateFormat('hh:mm a').format(route.firstDeliveryDatetime!),
+                            style: TextStyle(
+                              fontSize: width * 0.03,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
 
                 /// Category
@@ -737,6 +1064,42 @@ class _DriverDashboardState extends State<DriverDashboard> {
               SizedBox(width: width * 0.02),
               const Icon(
                 Icons.check_circle,
+                color: Colors.white,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      );
+    } else if (routeStatus == 6 || route.isFailed) {
+      // Completed - Show Delivered
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          onPressed: null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            disabledBackgroundColor: Colors.red,
+            padding: EdgeInsets.symmetric(vertical: height * 0.015),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+            elevation: 0,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Failed',
+                style: TextStyle(
+                  fontSize: width * 0.04,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(width: width * 0.02),
+              const Icon(
+                Icons.cancel,
                 color: Colors.white,
                 size: 20,
               ),

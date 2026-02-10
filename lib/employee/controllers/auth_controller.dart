@@ -3,6 +3,8 @@ import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/login_location_screen.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class AuthController extends GetxController {
@@ -32,7 +34,37 @@ class AuthController extends GetxController {
 
       final user = result as User;
       await _storage.saveUser(user);
-      Get.offAllNamed(AppRoutes.employeeHome);
+
+      // Navigate to location setup screen
+      Get.offAll(() => LoginLocationScreen(
+            userType: 'employee',
+            onLocationSelected: (location) async {
+              // Save location to local storage
+              await _storage.saveLocation(
+                latitude: location.latitude,
+                longitude: location.longitude,
+                address: location.address,
+              );
+              debugPrint('Employee: Location saved locally');
+
+              // Save location to backend
+              try {
+                await _repo.updateCurrentLocation(
+                  token: user.token,
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  address: location.address,
+                );
+                debugPrint('Employee: Location saved to backend');
+              } catch (e) {
+                debugPrint('Employee: Failed to save location to backend: $e');
+              }
+
+              debugPrint('Employee: Navigating to home');
+              // Navigate to home
+              Get.offAllNamed(AppRoutes.employeeHome);
+            },
+          ));
     } catch (e) {
       AppSnackbar.error(extractErrorMessage(e));
     } finally {

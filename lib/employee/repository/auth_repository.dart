@@ -66,8 +66,28 @@ class AuthRepository {
   }
 
   Future<BookingsResponse> getBookings(String token) async {
-    final res = await _service.getEmployeeBookings(token: token);
-    print("Token: $token");
+    // Fetch all bookings across all pages
+    final res = await _service.getAllEmployeeBookings(token: token);
+    return BookingsResponse.fromJson(res);
+  }
+
+  /// Fetch a single page of bookings (for pagination with server-side filters)
+  Future<BookingsResponse> getBookingsPage(
+    String token, {
+    int page = 1,
+    String? tab,
+    String? search,
+    String? bookingType,
+    String? vehicleAvailability,
+  }) async {
+    final res = await _service.getEmployeeBookings(
+      token: token,
+      page: page,
+      tab: tab,
+      search: search,
+      bookingType: bookingType,
+      vehicleAvailability: vehicleAvailability,
+    );
     return BookingsResponse.fromJson(res);
   }
 
@@ -122,19 +142,37 @@ class AuthRepository {
     );
   }
 
+  Future<Map<String, dynamic>> getDrivers({required String token}) async {
+    return await _service.getDrivers(token: token);
+  }
+
   Future<Map<String, dynamic>> changeDriver({
     required String token,
     required int bookingId,
+    int? driverId,
     required String driverName,
     required String driverMobile,
     required String vehicleNumber,
+    String? vehicleStartDate,
+    String? vehicleEndDate,
+    double? vehicleStartLat,
+    double? vehicleStartLng,
+    String? vehicleStartAddress,
+    int? priority,
   }) async {
     return await _service.changeDriver(
       token: token,
       bookingId: bookingId,
+      driverId: driverId,
       driverName: driverName,
       driverMobile: driverMobile,
       vehicleNumber: vehicleNumber,
+      vehicleStartDate: vehicleStartDate,
+      vehicleEndDate: vehicleEndDate,
+      vehicleStartLat: vehicleStartLat,
+      vehicleStartLng: vehicleStartLng,
+      vehicleStartAddress: vehicleStartAddress,
+      priority: priority,
     );
   }
 
@@ -157,6 +195,20 @@ class AuthRepository {
       token: token,
       bookingId: bookingId,
       driverId: driverId,
+    );
+  }
+
+  Future<Map<String, dynamic>> updateCurrentLocation({
+    required String token,
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    return await _service.updateEmployeeCurrentLocation(
+      token: token,
+      latitude: latitude,
+      longitude: longitude,
+      address: address,
     );
   }
 }

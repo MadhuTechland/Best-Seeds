@@ -78,13 +78,74 @@ class AuthService {
     );
   }
 
-  Future<Map<String, dynamic>> getEmployeeBookings({required String token}) {
+  Future<Map<String, dynamic>> getEmployeeBookings({
+    required String token,
+    int page = 1,
+    String? tab,
+    String? search,
+    String? bookingType,
+    String? vehicleAvailability,
+  }) {
+    final params = <String, String>{'page': '$page'};
+    if (tab != null) params['tab'] = tab;
+    if (search != null && search.isNotEmpty) params['search'] = search;
+    if (bookingType != null) params['booking_type'] = bookingType;
+    if (vehicleAvailability != null) params['vehicle_availability'] = vehicleAvailability;
+
+    final queryString = params.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&');
+    String url = '${AppConstants.baseUrl}${AppConstants.employeeBookingsApi}?$queryString';
     return _apiClient.request(
-      url: AppConstants.baseUrl + AppConstants.employeeBookingsApi,
+      url: url,
       body: {},
       method: 'GET',
       token: token,
     );
+  }
+
+  /// Fetches all bookings across all pages
+  Future<Map<String, dynamic>> getAllEmployeeBookings({required String token}) async {
+    List<dynamic> allBookings = [];
+    int currentPage = 1;
+    int lastPage = 1;
+    Map<String, dynamic>? counts;
+
+    do {
+      final response = await getEmployeeBookings(token: token, page: currentPage);
+
+      if (response['status'] == true) {
+        // Add bookings from this page
+        final bookings = response['bookings'] as List<dynamic>? ?? [];
+        allBookings.addAll(bookings);
+
+        // Get pagination info
+        final pagination = response['pagination'] as Map<String, dynamic>?;
+        if (pagination != null) {
+          lastPage = pagination['last_page'] ?? 1;
+        }
+
+        // Store counts from first page
+        if (counts == null && response['counts'] != null) {
+          counts = response['counts'] as Map<String, dynamic>;
+        }
+      } else {
+        break;
+      }
+
+      currentPage++;
+    } while (currentPage <= lastPage);
+
+    return {
+      'status': true,
+      'message': 'All bookings fetched successfully',
+      'bookings': allBookings,
+      'counts': counts ?? {'all': 0, 'new': 0, 'current': 0, 'past': 0},
+      'pagination': {
+        'current_page': 1,
+        'last_page': 1,
+        'per_page': allBookings.length,
+        'total': allBookings.length,
+      },
+    };
   }
 
   Future<Map<String, dynamic>> acceptBooking({
@@ -152,20 +213,43 @@ class AuthService {
     );
   }
 
+  Future<Map<String, dynamic>> getDrivers({required String token}) {
+    return _apiClient.request(
+      url: AppConstants.baseUrl + AppConstants.employeeGetDriversApi,
+      body: {},
+      method: 'GET',
+      token: token,
+    );
+  }
+
   Future<Map<String, dynamic>> changeDriver({
     required String token,
     required int bookingId,
+    int? driverId,
     required String driverName,
     required String driverMobile,
     required String vehicleNumber,
+    String? vehicleStartDate,
+    String? vehicleEndDate,
+    double? vehicleStartLat,
+    double? vehicleStartLng,
+    String? vehicleStartAddress,
+    int? priority,
   }) {
     return _apiClient.request(
       url:
           '${AppConstants.baseUrl}${AppConstants.employeeChangeDriverApi}/$bookingId/change-driver',
       body: {
+        if (driverId != null) 'driver_id': driverId,
         'driver_name': driverName,
         'driver_mobile': driverMobile,
         'vehicle_number': vehicleNumber,
+        if (vehicleStartDate != null) 'vehicle_start_date': vehicleStartDate,
+        if (vehicleEndDate != null) 'vehicle_end_date': vehicleEndDate,
+        if (vehicleStartLat != null) 'vehicle_start_lat': vehicleStartLat,
+        if (vehicleStartLng != null) 'vehicle_start_lng': vehicleStartLng,
+        if (vehicleStartAddress != null) 'vehicle_start_address': vehicleStartAddress,
+        if (priority != null) 'priority': priority,
       },
       token: token,
     );
@@ -306,6 +390,44 @@ class AuthService {
       body: {
         'booking_id': bookingId,
         'status': status,
+      },
+    );
+  }
+
+  // ==================== Location Update APIs ====================
+
+  Future<Map<String, dynamic>> updateDriverCurrentLocation({
+    required String token,
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    return await _apiClient.request(
+      url: AppConstants.baseUrl + AppConstants.driverUpdateCurrentLocationApi,
+      method: 'POST',
+      token: token,
+      body: {
+        'latitude': latitude,
+        'longitude': longitude,
+        'address': address,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> updateEmployeeCurrentLocation({
+    required String token,
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    return await _apiClient.request(
+      url: AppConstants.baseUrl + AppConstants.employeeUpdateLocationApi,
+      method: 'POST',
+      token: token,
+      body: {
+        'latitude': latitude,
+        'longitude': longitude,
+        'address': address,
       },
     );
   }

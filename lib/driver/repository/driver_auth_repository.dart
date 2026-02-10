@@ -82,4 +82,18 @@ class DriverAuthRepository {
       status: status,
     );
   }
+
+  Future<Map<String, dynamic>> updateCurrentLocation({
+    required String token,
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    return await _service.updateDriverCurrentLocation(
+      token: token,
+      latitude: latitude,
+      longitude: longitude,
+      address: address,
+    );
+  }
 }

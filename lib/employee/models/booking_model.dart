@@ -115,18 +115,46 @@ class BookingFarmer {
 }
 
 class BookingDriverDetails {
+  final int? driverId;
   final String name;
   final String mobile;
   final String vehicleNumber;
+  final String? vehicleStartDate;
+  final String? vehicleEndDate;
+  final double? vehicleStartLat;
+  final double? vehicleStartLng;
+  final String? vehicleStartAddress;
+  final int? priority;
 
-  BookingDriverDetails(
-      {required this.name, required this.mobile, required this.vehicleNumber});
+  BookingDriverDetails({
+    this.driverId,
+    required this.name,
+    required this.mobile,
+    required this.vehicleNumber,
+    this.vehicleStartDate,
+    this.vehicleEndDate,
+    this.vehicleStartLat,
+    this.vehicleStartLng,
+    this.vehicleStartAddress,
+    this.priority,
+  });
 
   factory BookingDriverDetails.fromJson(Map<String, dynamic> json) {
     return BookingDriverDetails(
+      driverId: json['driver_id'],
       name: json['driver_name'] ?? '',
       mobile: json['driver_mobile'] ?? '',
       vehicleNumber: json['vehicle_number'] ?? '',
+      vehicleStartDate: json['vehicle_start_date'],
+      vehicleEndDate: json['vehicle_end_date'],
+      vehicleStartLat: json['vehicle_start_lat'] != null
+          ? double.tryParse(json['vehicle_start_lat'].toString())
+          : null,
+      vehicleStartLng: json['vehicle_start_lng'] != null
+          ? double.tryParse(json['vehicle_start_lng'].toString())
+          : null,
+      vehicleStartAddress: json['vehicle_start_address'],
+      priority: json['priority'],
     );
   }
 
@@ -252,17 +280,42 @@ class BookingPagination {
   }
 }
 
+class BookingCounts {
+  final int all;
+  final int newBookings;
+  final int current;
+  final int past;
+
+  BookingCounts({
+    required this.all,
+    required this.newBookings,
+    required this.current,
+    required this.past,
+  });
+
+  factory BookingCounts.fromJson(Map<String, dynamic> json) {
+    return BookingCounts(
+      all: json['all'] ?? 0,
+      newBookings: json['new'] ?? 0,
+      current: json['current'] ?? 0,
+      past: json['past'] ?? 0,
+    );
+  }
+}
+
 class BookingsResponse {
   final bool status;
   final String message;
   final BookingPagination pagination;
   final List<Booking> bookings;
+  final BookingCounts counts;
 
   BookingsResponse({
     required this.status,
     required this.message,
     required this.pagination,
     required this.bookings,
+    required this.counts,
   });
 
   factory BookingsResponse.fromJson(Map<String, dynamic> json) {
@@ -274,6 +327,7 @@ class BookingsResponse {
               ?.map((e) => Booking.fromJson(e))
               .toList() ??
           [],
+      counts: BookingCounts.fromJson(json['counts'] ?? {}),
     );
   }
 }

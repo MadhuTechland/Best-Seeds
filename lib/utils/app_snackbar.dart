@@ -43,10 +43,16 @@ class AppSnackbar {
 String extractErrorMessage(dynamic error) {
   if (error == null) return 'Something went wrong';
 
-  final message = error.toString();
+  String message = error.toString();
 
+  // Remove "Exception:" prefix if present
   if (message.startsWith('Exception:')) {
-    return message.replaceFirst('Exception:', '').trim();
+    message = message.replaceFirst('Exception:', '').trim();
+  }
+
+  // If the message is empty or just whitespace, return default
+  if (message.isEmpty || message.trim().isEmpty) {
+    return 'Something went wrong';
   }
 
   return message;

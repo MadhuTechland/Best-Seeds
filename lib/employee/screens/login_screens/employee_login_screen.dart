@@ -4,23 +4,55 @@ import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-class EmployeeLoginScreen extends StatelessWidget {
-  EmployeeLoginScreen({super.key});
+class EmployeeLoginScreen extends StatefulWidget {
+  const EmployeeLoginScreen({super.key});
+
+  @override
+  State<EmployeeLoginScreen> createState() => _EmployeeLoginScreenState();
+}
+
+class _EmployeeLoginScreenState extends State<EmployeeLoginScreen> {
   final AuthController controller = Get.put(AuthController());
 
   final idCtrl = TextEditingController();
   final passCtrl = TextEditingController();
+
+  // Track if form is valid (ID not empty and password min 6 chars)
+  bool _isFormValid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    idCtrl.addListener(_checkFormValid);
+    passCtrl.addListener(_checkFormValid);
+  }
+
+  @override
+  void dispose() {
+    idCtrl.removeListener(_checkFormValid);
+    passCtrl.removeListener(_checkFormValid);
+    idCtrl.dispose();
+    passCtrl.dispose();
+    super.dispose();
+  }
+
+  void _checkFormValid() {
+    final isValid = idCtrl.text.trim().isNotEmpty && passCtrl.text.length >= 6;
+    if (isValid != _isFormValid) {
+      setState(() {
+        _isFormValid = isValid;
+      });
+    }
+  }
   @override
   Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final width = media.size.width;
-    final height = media.size.height;
+    final width = MediaQuery.of(context).size.width;
+    final height = MediaQuery.of(context).size.height;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       body: Container(
         width: width,
-        height: height,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
@@ -32,17 +64,12 @@ class EmployeeLoginScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: height -
-                    MediaQuery.of(context).padding.top -
-                    MediaQuery.of(context).padding.bottom,
-              ),
-              child: IntrinsicHeight(
+          child: CustomScrollView(
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
                 child: Column(
                   children: [
-                    /// ================= Header + Text =================
                     Padding(
                       padding: EdgeInsets.symmetric(
                         horizontal: width * 0.06,
@@ -51,9 +78,9 @@ class EmployeeLoginScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          /// Header row
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
                                 'Login as Employee',
@@ -69,7 +96,7 @@ class EmployeeLoginScreen extends StatelessWidget {
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) =>
-                                        DriverLoginScreen(),
+                                          DriverLoginScreen(),
                                     ),
                                   ),
                                 },
@@ -90,7 +117,6 @@ class EmployeeLoginScreen extends StatelessWidget {
 
                           SizedBox(height: height * 0.07),
 
-                          /// Title
                           Center(
                             child: Text(
                               'Secure Access for \n Best Seeds Employees',
@@ -107,18 +133,16 @@ class EmployeeLoginScreen extends StatelessWidget {
                       ),
                     ),
 
-                    /// ================= Image Section =================
                     Flexible(
                       child: Center(
                         child: Image.asset(
                           'assets/images/employee_login.png',
-                          width: width * 1,
+                          width: width,
                           fit: BoxFit.contain,
                         ),
                       ),
                     ),
 
-                    /// ================= Bottom Card =================
                     Container(
                       width: double.infinity,
                       padding: EdgeInsets.symmetric(
@@ -146,11 +170,12 @@ class EmployeeLoginScreen extends StatelessWidget {
 
                           SizedBox(height: height * 0.025),
 
-                          /// Mobile input
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12),
                             decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
+                              border:
+                                  Border.all(color: Colors.grey.shade300),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -170,9 +195,11 @@ class EmployeeLoginScreen extends StatelessWidget {
                           ),
                           SizedBox(height: height * 0.03),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12),
                             decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
+                              border:
+                                  Border.all(color: Colors.grey.shade300),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -193,34 +220,52 @@ class EmployeeLoginScreen extends StatelessWidget {
 
                           SizedBox(height: height * 0.03),
 
-                          /// Continue button
                           Obx(() => SizedBox(
                                 width: double.infinity,
                                 height: height * 0.06,
                                 child: ElevatedButton(
-                                  onPressed: controller.isLoading.value
-                                      ? null
-                                      : () {
-                                          print('UI: Continue button pressed');
-                                          print(
-                                              'UI: ID = ${idCtrl.text.trim()}');
-                                          print(
-                                              'UI: Password = ${passCtrl.text.trim()}');
-                                          controller.employeeLogin(
-                                            idCtrl.text.trim(),
-                                            passCtrl.text.trim(),
-                                          );
-                                        },
+                                  onPressed:
+                                      controller.isLoading.value ||
+                                              !_isFormValid
+                                          ? null
+                                          : () {
+                                              controller.employeeLogin(
+                                                idCtrl.text.trim(),
+                                                passCtrl.text.trim(),
+                                              );
+                                            },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _isFormValid
+                                        ? const Color(0xFF0077C8)
+                                        : const Color(0xFF0077C8)
+                                            .withValues(alpha: 0.4),
+                                    disabledBackgroundColor:
+                                        const Color(0xFF0077C8)
+                                            .withValues(alpha: 0.4),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14),
+                                    ),
+                                  ),
                                   child: controller.isLoading.value
                                       ? const CircularProgressIndicator(
                                           color: Colors.white)
-                                      : const Text('Continue'),
+                                      : Text(
+                                          'Continue',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: _isFormValid
+                                                ? Colors.white
+                                                : Colors.white.withValues(
+                                                    alpha: 0.7),
+                                          ),
+                                        ),
                                 ),
                               )),
 
                           SizedBox(height: height * 0.02),
 
-                          /// Footer text
                           Center(
                             child: Text(
                               'By sign-in, I agree to the Terms & Conditions\nand Privacy Policy of BestSeed.',
@@ -237,7 +282,7 @@ class EmployeeLoginScreen extends StatelessWidget {
                   ],
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

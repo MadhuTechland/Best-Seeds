@@ -23,16 +23,83 @@ class _BookingScreenState extends State<BookingScreen> {
   bool _isLoading = true;
   String? _error;
 
+  // Pagination
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+
+  // Search and filter
+  final TextEditingController _searchController = TextEditingController();
+
+  // Counts from backend
+  int _allCount = 0;
+  int _newCount = 0;
+  int _currentCount = 0;
+  int _pastCount = 0;
+
+  // Filter options
+  String? _selectedBookingType; // hatchery, spot, vehicle
+  String? _selectedVehicleAvailability; // assigned, not_assigned
+
+  // Tab scroll controller
+  final ScrollController _tabScrollController = ScrollController();
+
+  // List scroll controller for pagination
+  final ScrollController _listScrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
     _loadBookings();
+    _searchController.addListener(_onSearchChanged);
+    _listScrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _tabScrollController.dispose();
+    _listScrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_listScrollController.position.pixels >=
+        _listScrollController.position.maxScrollExtent - 200) {
+      _loadMoreBookings();
+    }
+  }
+
+  // Debounce timer for search
+  DateTime? _lastSearchTime;
+
+  void _onSearchChanged() {
+    _lastSearchTime = DateTime.now();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (_lastSearchTime != null &&
+          DateTime.now().difference(_lastSearchTime!) >= const Duration(milliseconds: 450)) {
+        _loadBookings();
+      }
+    });
+  }
+
+  // Get tab string for server-side filtering
+  String? get _currentTab {
+    switch (selectedTabIndex) {
+      case 1: return 'new';
+      case 2: return 'current';
+      case 3: return 'past';
+      default: return null;
+    }
   }
 
   Future<void> _loadBookings() async {
     setState(() {
       _isLoading = true;
       _error = null;
+      _currentPage = 1;
+      _hasMore = true;
+      _allBookings = [];
     });
 
     try {
@@ -45,15 +112,67 @@ class _BookingScreenState extends State<BookingScreen> {
         return;
       }
 
-      final response = await _repo.getBookings(token);
+      final searchText = _searchController.text.trim();
+      final response = await _repo.getBookingsPage(
+        token,
+        page: 1,
+        tab: _currentTab,
+        search: searchText.isNotEmpty ? searchText : null,
+        bookingType: _selectedBookingType,
+        vehicleAvailability: _selectedVehicleAvailability,
+      );
       setState(() {
         _allBookings = response.bookings;
+        _allCount = response.counts.all;
+        _newCount = response.counts.newBookings;
+        _currentCount = response.counts.current;
+        _pastCount = response.counts.past;
+        _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+        _currentPage = 1;
         _isLoading = false;
       });
     } catch (e) {
       setState(() {
         _error = e.toString();
         _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreBookings() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final token = _storage.getToken();
+      if (token == null) {
+        setState(() => _isLoadingMore = false);
+        return;
+      }
+
+      final nextPage = _currentPage + 1;
+      final searchText = _searchController.text.trim();
+      final response = await _repo.getBookingsPage(
+        token,
+        page: nextPage,
+        tab: _currentTab,
+        search: searchText.isNotEmpty ? searchText : null,
+        bookingType: _selectedBookingType,
+        vehicleAvailability: _selectedVehicleAvailability,
+      );
+
+      setState(() {
+        _allBookings.addAll(response.bookings);
+        _currentPage = nextPage;
+        _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+        _isLoadingMore = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoadingMore = false;
       });
     }
   }
@@ -68,7 +187,8 @@ class _BookingScreenState extends State<BookingScreen> {
     try {
       // Show loading
       Get.dialog(
-        const Center(child: CircularProgressIndicator(color: Color(0xFF0077C8))),
+        const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0077C8))),
         barrierDismissible: false,
       );
 
@@ -81,7 +201,6 @@ class _BookingScreenState extends State<BookingScreen> {
       _loadBookings();
     } catch (e) {
       Get.back(); // Close loading
-      print('ERROR to accept booking: $e');
       AppSnackbar.error(extractErrorMessage(e));
     }
   }
@@ -197,7 +316,8 @@ class _BookingScreenState extends State<BookingScreen> {
     try {
       // Show loading
       Get.dialog(
-        const Center(child: CircularProgressIndicator(color: Color(0xFF0077C8))),
+        const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0077C8))),
         barrierDismissible: false,
       );
 
@@ -218,28 +338,11 @@ class _BookingScreenState extends State<BookingScreen> {
     }
   }
 
-  List<Booking> get _filteredBookings {
-    switch (selectedTabIndex) {
-      case 0: // All
-        return _allBookings;
-      case 1: // New Bookings (pending - status value 1)
-        return _allBookings.where((b) => b.status.isPending).toList();
-      case 2: // Current Bookings (in progress)
-        return _allBookings
-            .where((b) => b.status.isAccepted || b.status.isInProgress || b.status.isDelivered)
-            .toList();
-      case 3: // Past (completed or rejected)
-        return _allBookings
-            .where((b) => b.status.isCompleted || b.status.isRejected)
-            .toList();
-      default:
-        return _allBookings;
-    }
-  }
+  // Server-side filtered - just return loaded data
+  List<Booking> get _filteredBookings => _allBookings;
 
-  int get _newBookingsCount {
-    return _allBookings.where((b) => b.status.isPending).length;
-  }
+  bool get _hasActiveFilters =>
+      _selectedBookingType != null || _selectedVehicleAvailability != null;
 
   @override
   Widget build(BuildContext context) {
@@ -298,33 +401,294 @@ class _BookingScreenState extends State<BookingScreen> {
 
   Widget _buildSearchBar(double width, double height) {
     return Container(
-      padding: EdgeInsets.all(width * 0.05),
+      padding: EdgeInsets.symmetric(
+          horizontal: width * 0.05, vertical: width * 0.02),
       color: Colors.white,
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: width * 0.04),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(width * 0.09),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.search,
+                    color: Colors.grey,
+                    size: width * 0.06,
+                  ),
+                  SizedBox(width: width * 0.03),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search Bookings',
+                        hintStyle: TextStyle(
+                          color: Colors.grey,
+                          fontSize: width * 0.04,
+                        ),
+                        border: InputBorder.none,
+                        contentPadding:
+                            EdgeInsets.symmetric(vertical: height * 0.015),
+                      ),
+                    ),
+                  ),
+                  if (_searchController.text.isNotEmpty)
+                    GestureDetector(
+                      onTap: () {
+                        _searchController.clear();
+                      },
+                      child: Icon(
+                        Icons.close,
+                        color: Colors.grey,
+                        size: width * 0.05,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          SizedBox(width: width * 0.03),
+          GestureDetector(
+            onTap: _showFilterDialog,
+            child: Container(
+              padding: EdgeInsets.all(width * 0.03),
+              decoration: BoxDecoration(
+                color: _hasActiveFilters
+                    ? const Color(0xFF0077C8)
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Stack(
+                children: [
+                  Icon(
+                    Icons.filter_list,
+                    color:
+                        _hasActiveFilters ? Colors.white : Colors.grey.shade700,
+                    size: width * 0.06,
+                  ),
+                  if (_hasActiveFilters)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showFilterDialog() {
+    final width = MediaQuery.of(context).size.width;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
+                ),
+              ),
+              padding: EdgeInsets.all(width * 0.05),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Filters',
+                        style: TextStyle(
+                          fontSize: width * 0.05,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setModalState(() {
+                            _selectedBookingType = null;
+                            _selectedVehicleAvailability = null;
+                          });
+                        },
+                        child: Text(
+                          'Clear All',
+                          style: TextStyle(
+                            color: const Color(0xFF0077C8),
+                            fontSize: width * 0.04,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: width * 0.04),
+
+                  // Booking Type Filter
+                  Text(
+                    'Booking Type',
+                    style: TextStyle(
+                      fontSize: width * 0.042,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: width * 0.02),
+                  Wrap(
+                    spacing: width * 0.02,
+                    children: [
+                      _buildFilterChip(
+                        label: 'All',
+                        isSelected: _selectedBookingType == null,
+                        onTap: () =>
+                            setModalState(() => _selectedBookingType = null),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Spot Hatchery',
+                        isSelected: _selectedBookingType == 'spot',
+                        onTap: () =>
+                            setModalState(() => _selectedBookingType = 'spot'),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Hatchery',
+                        isSelected: _selectedBookingType == 'hatchery',
+                        onTap: () => setModalState(
+                            () => _selectedBookingType = 'hatchery'),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Vehicle',
+                        isSelected: _selectedBookingType == 'vehicle',
+                        onTap: () => setModalState(
+                            () => _selectedBookingType = 'vehicle'),
+                        width: width,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: width * 0.05),
+
+                  // Vehicle Availability Filter
+                  Text(
+                    'Vehicle Availability',
+                    style: TextStyle(
+                      fontSize: width * 0.042,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: width * 0.02),
+                  Wrap(
+                    spacing: width * 0.02,
+                    children: [
+                      _buildFilterChip(
+                        label: 'All',
+                        isSelected: _selectedVehicleAvailability == null,
+                        onTap: () => setModalState(
+                            () => _selectedVehicleAvailability = null),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'Driver Assigned',
+                        isSelected: _selectedVehicleAvailability == 'assigned',
+                        onTap: () => setModalState(
+                            () => _selectedVehicleAvailability = 'assigned'),
+                        width: width,
+                      ),
+                      _buildFilterChip(
+                        label: 'No Driver',
+                        isSelected:
+                            _selectedVehicleAvailability == 'not_assigned',
+                        onTap: () => setModalState(() =>
+                            _selectedVehicleAvailability = 'not_assigned'),
+                        width: width,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: width * 0.06),
+
+                  // Apply Button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _loadBookings(); // Reload with server-side filters
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0077C8),
+                        padding: EdgeInsets.symmetric(vertical: width * 0.04),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Apply Filters',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: width * 0.045,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: width * 0.02),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+    required double width,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
       child: Container(
         padding: EdgeInsets.symmetric(
           horizontal: width * 0.04,
-          vertical: height * 0.015,
+          vertical: width * 0.025,
         ),
+        margin: EdgeInsets.only(bottom: width * 0.02),
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? const Color(0xFF0077C8) : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF0077C8) : Colors.grey.shade300,
+          ),
         ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.search,
-              color: Colors.grey,
-              size: width * 0.06,
-            ),
-            SizedBox(width: width * 0.03),
-            Text(
-              'Search Bookings',
-              style: TextStyle(
-                color: Colors.grey,
-                fontSize: width * 0.04,
-              ),
-            ),
-          ],
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontSize: width * 0.035,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ),
         ),
       ),
     );
@@ -332,16 +696,17 @@ class _BookingScreenState extends State<BookingScreen> {
 
   Widget _buildTabBar(double width, double height) {
     final tabs = [
-      {'label': 'All', 'count': null},
-      {'label': 'New Bookings', 'count': _newBookingsCount > 0 ? _newBookingsCount : null},
-      {'label': 'Current Bookings', 'count': null},
-      {'label': 'Past', 'count': null},
+      {'label': 'All', 'count': _allCount > 0 ? _allCount : null},
+      {'label': 'New Bookings', 'count': _newCount > 0 ? _newCount : null},
+      {'label': 'Current', 'count': _currentCount > 0 ? _currentCount : null},
+      {'label': 'Past', 'count': _pastCount > 0 ? _pastCount : null},
     ];
 
     return Container(
       height: height * 0.06,
       color: Colors.white,
       child: ListView.builder(
+        controller: _tabScrollController,
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.symmetric(horizontal: width * 0.03),
         itemCount: tabs.length,
@@ -351,9 +716,12 @@ class _BookingScreenState extends State<BookingScreen> {
 
           return GestureDetector(
             onTap: () {
-              setState(() {
-                selectedTabIndex = index;
-              });
+              if (selectedTabIndex != index) {
+                setState(() {
+                  selectedTabIndex = index;
+                });
+                _loadBookings();
+              }
             },
             child: Container(
               margin: EdgeInsets.symmetric(
@@ -364,7 +732,8 @@ class _BookingScreenState extends State<BookingScreen> {
                 horizontal: width * 0.04,
               ),
               decoration: BoxDecoration(
-                color: isSelected ? const Color(0xFF0077C8) : Colors.transparent,
+                color:
+                    isSelected ? const Color(0xFF0077C8) : Colors.transparent,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Row(
@@ -374,7 +743,8 @@ class _BookingScreenState extends State<BookingScreen> {
                     style: TextStyle(
                       color: isSelected ? Colors.white : Colors.black,
                       fontSize: width * 0.038,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      fontWeight:
+                          isSelected ? FontWeight.w600 : FontWeight.normal,
                     ),
                   ),
                   if (tab['count'] != null) ...[
@@ -388,7 +758,9 @@ class _BookingScreenState extends State<BookingScreen> {
                       child: Text(
                         '${tab['count']}',
                         style: TextStyle(
-                          color: isSelected ? const Color(0xFF0077C8) : Colors.black,
+                          color: isSelected
+                              ? const Color(0xFF0077C8)
+                              : Colors.black,
                           fontSize: width * 0.03,
                           fontWeight: FontWeight.bold,
                         ),
@@ -439,17 +811,20 @@ class _BookingScreenState extends State<BookingScreen> {
     final bookings = _filteredBookings;
 
     if (bookings.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade400),
-            SizedBox(height: height * 0.02),
-            Text(
-              'No bookings found',
-              style: TextStyle(color: Colors.grey.shade600),
-            ),
-          ],
+      return Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade400),
+              SizedBox(height: height * 0.02),
+              Text(
+                'No bookings found',
+                style: TextStyle(color: Colors.grey.shade600),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -458,9 +833,14 @@ class _BookingScreenState extends State<BookingScreen> {
       onRefresh: _loadBookings,
       color: const Color(0xFF0077C8),
       child: ListView.builder(
+        controller: _listScrollController,
         padding: EdgeInsets.all(width * 0.04),
-        itemCount: bookings.length,
+        itemCount: bookings.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
+          // Show loading indicator at the bottom
+          if (index == bookings.length) {
+            return _buildLoadingIndicator();
+          }
           final booking = bookings[index];
           return Padding(
             padding: EdgeInsets.only(bottom: height * 0.02),
@@ -468,6 +848,42 @@ class _BookingScreenState extends State<BookingScreen> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    if (!_isLoadingMore) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildDot(0),
+            const SizedBox(width: 8),
+            _buildDot(1),
+            const SizedBox(width: 8),
+            _buildDot(2),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDot(int index) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: Duration(milliseconds: 600 + (index * 200)),
+      builder: (context, value, child) {
+        return Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0077C8).withValues(alpha: 0.3 + (value * 0.7)),
+            shape: BoxShape.circle,
+          ),
+        );
+      },
     );
   }
 
@@ -513,10 +929,47 @@ class _BookingScreenState extends State<BookingScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (booking.deliveryDatetime != null &&
+                  booking.deliveryDatetime!.isNotEmpty)
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: width * 0.02,
+                    vertical: height * 0.004,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    booking.deliveryDatetime!,
+                    style: TextStyle(
+                      fontSize: width * 0.035,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          SizedBox(height: height * 0.015),
+
+          // Type badge
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  booking.displayBookingType,
+                  style: TextStyle(
+                    fontSize: width * 0.035,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               Container(
                 padding: EdgeInsets.symmetric(
-                  horizontal: width * 0.02,
-                  vertical: height * 0.004,
+                  horizontal: width * 0.03,
+                  vertical: height * 0.005,
                 ),
                 decoration: BoxDecoration(
                   color: _getStatusColor(booking.status).withValues(alpha: 0.1),
@@ -535,93 +988,126 @@ class _BookingScreenState extends State<BookingScreen> {
           ),
           SizedBox(height: height * 0.015),
 
-          // Type badge
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: width * 0.03,
-              vertical: height * 0.005,
+          // Title and category - only show if data is available
+          if (booking.hatcheryName.isNotEmpty)
+            Text(
+              booking.hatcheryName,
+              style: TextStyle(
+                fontSize: width * 0.045,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              booking.displayBookingType,
+          if (booking.categoryName.isNotEmpty)
+            Text(
+              booking.categoryName,
               style: TextStyle(
                 fontSize: width * 0.035,
-                fontWeight: FontWeight.w500,
+                color: Colors.grey,
               ),
             ),
-          ),
-          SizedBox(height: height * 0.015),
-
-          // Title and category
-          Text(
-            booking.hatcheryName,
-            style: TextStyle(
-              fontSize: width * 0.045,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          Text(
-            booking.categoryName,
-            style: TextStyle(
-              fontSize: width * 0.035,
-              color: Colors.grey,
-            ),
-          ),
-          SizedBox(height: height * 0.015),
+          if (booking.hatcheryName.isNotEmpty ||
+              booking.categoryName.isNotEmpty)
+            SizedBox(height: height * 0.015),
 
           // Info section
-          Row(
-            children: [
-              Icon(Icons.inventory_2_outlined, size: width * 0.04, color: Colors.grey),
-              SizedBox(width: width * 0.02),
-              Text(
-                '${booking.noOfPieces} Pieces',
-                style: TextStyle(
-                  fontSize: width * 0.038,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: height * 0.01),
+          if (booking.noOfPieces > 0 ||
+              (booking.preferredDate != null &&
+                  booking.preferredDate!.isNotEmpty))
+            Row(
+              children: [
+                if (booking.noOfPieces > 0) ...[
+                  Icon(
+                    Icons.inventory_2_outlined,
+                    size: width * 0.04,
+                    color: Colors.grey,
+                  ),
+                  SizedBox(width: width * 0.02),
+                  Text(
+                    '${booking.noOfPieces} Pieces',
+                    style: TextStyle(
+                      fontSize: width * 0.038,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
 
-          // Address
-          Row(
-            children: [
-              Icon(Icons.location_on_outlined, size: width * 0.04, color: Colors.grey),
-              SizedBox(width: width * 0.02),
-              Expanded(
-                child: Text(
-                  booking.droppingLocation,
+                /// Pushes next widget to the right
+                const Spacer(),
+
+                if (booking.preferredDate != null &&
+                    booking.preferredDate!.isNotEmpty)
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: width * 0.02,
+                      vertical: height * 0.004,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min, // IMPORTANT
+                      children: [
+                        Icon(
+                          Icons.calendar_today_outlined,
+                          size: width * 0.04,
+                          color: Colors.grey.shade700,
+                        ),
+                        SizedBox(width: width * 0.01),
+                        Text(
+                          booking.preferredDate!,
+                          style: TextStyle(
+                            fontSize: width * 0.035,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+
+          // Address - only show if droppingLocation is not empty
+          if (booking.droppingLocation.isNotEmpty) ...[
+            SizedBox(height: height * 0.01),
+            Row(
+              children: [
+                Icon(Icons.location_on_outlined,
+                    size: width * 0.04, color: Colors.grey),
+                SizedBox(width: width * 0.02),
+                Expanded(
+                  child: Text(
+                    booking.droppingLocation,
+                    style: TextStyle(
+                      fontSize: width * 0.038,
+                      color: Colors.grey.shade700,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+
+          // Farmer info - only show if farmer name is not empty
+          if (booking.farmer.name.isNotEmpty) ...[
+            SizedBox(height: height * 0.015),
+            Row(
+              children: [
+                Icon(Icons.person_outline,
+                    size: width * 0.045, color: Colors.grey.shade700),
+                SizedBox(width: width * 0.02),
+                Text(
+                  booking.farmer.name,
                   style: TextStyle(
                     fontSize: width * 0.038,
                     color: Colors.grey.shade700,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-            ],
-          ),
-
-          // Farmer info
-          SizedBox(height: height * 0.015),
-          Row(
-            children: [
-              Icon(Icons.person_outline, size: width * 0.045, color: Colors.grey.shade700),
-              SizedBox(width: width * 0.02),
-              Text(
-                booking.farmer.name,
-                style: TextStyle(
-                  fontSize: width * 0.038,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
 
           SizedBox(height: height * 0.02),
 
@@ -699,7 +1185,7 @@ class _BookingScreenState extends State<BookingScreen> {
                 ),
               ],
             ),
-            ] else if (status == 'tracking') ...[
+          ] else if (status == 'tracking') ...[
             Row(
               children: [
                 Expanded(
@@ -731,35 +1217,34 @@ class _BookingScreenState extends State<BookingScreen> {
                     ),
                   ),
                 ),
+                if (booking.isEditable) SizedBox(width: width * 0.03),
                 if (booking.isEditable)
-                SizedBox(width: width * 0.03),
-                if (booking.isEditable)
-                GestureDetector(
-                  onTap: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => EditHatcheryDetailsScreen(
-                          booking: booking,
+                  GestureDetector(
+                    onTap: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => EditHatcheryDetailsScreen(
+                            booking: booking,
+                          ),
                         ),
+                      );
+                      if (result == true) {
+                        _loadBookings();
+                      }
+                    },
+                    child: Container(
+                      padding: EdgeInsets.all(width * 0.025),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    );
-                    if (result == true) {
-                      _loadBookings();
-                    }
-                  },
-                  child: Container(
-                    padding: EdgeInsets.all(width * 0.025),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      Icons.edit_outlined,
-                      size: width * 0.05,
+                      child: Icon(
+                        Icons.edit_outlined,
+                        size: width * 0.05,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ] else if (status == 'completed') ...[
@@ -818,25 +1303,6 @@ class _BookingScreenState extends State<BookingScreen> {
                     color: Colors.red,
                   ),
                 ],
-              ),
-            ),
-          ] else ...[
-            ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0077C8),
-                padding: EdgeInsets.symmetric(vertical: height * 0.015),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text(
-                'View Details',
-                style: TextStyle(
-                  fontSize: width * 0.04,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
               ),
             ),
           ],

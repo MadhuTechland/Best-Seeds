@@ -1,6 +1,9 @@
+import 'package:bestseeds/driver/repository/driver_auth_repository.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
+import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
+import 'package:bestseeds/widgets/login_location_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -28,6 +31,44 @@ class _SplashScreenState extends State<SplashScreen> {
     final employee = await employeeStorage.getUser();
     if (employee != null) {
       print('Splash: Employee found - ${employee.name}');
+
+      // Check if employee has location saved
+      if (!employeeStorage.hasLocation()) {
+        print(
+            'Splash: Employee has no location, navigating to location screen');
+        Get.offAll(() => LoginLocationScreen(
+              userType: 'employee',
+              onLocationSelected: (location) async {
+                // Save location to local storage
+                await employeeStorage.saveLocation(
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  address: location.address,
+                );
+                print('Splash: Employee location saved locally');
+
+                // Save location to backend
+                try {
+                  final repo = AuthRepository();
+                  await repo.updateCurrentLocation(
+                    token: employee.token,
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    address: location.address,
+                  );
+                  print('Splash: Employee location saved to backend');
+                } catch (e) {
+                  print(
+                      'Splash: Failed to save employee location to backend: $e');
+                }
+
+                // Navigate to home
+                Get.offAllNamed(AppRoutes.employeeHome);
+              },
+            ));
+        return;
+      }
+
       Get.offAllNamed(AppRoutes.employeeHome);
       return;
     }
@@ -36,8 +77,44 @@ class _SplashScreenState extends State<SplashScreen> {
     final driver = await driverStorage.getDriver();
     if (driver != null) {
       print('Splash: Driver found - ${driver.name}');
-      Get.offAllNamed(AppRoutes.driverHome);
+
+      // Check if driver has location saved
+      // if (!driverStorage.hasLocation()) {
+      print('Splash: Driver has no location, navigating to location screen');
+      Get.offAll(() => LoginLocationScreen(
+            userType: 'driver',
+            onLocationSelected: (location) async {
+              // Save location to local storage
+              await driverStorage.saveLocation(
+                latitude: location.latitude,
+                longitude: location.longitude,
+                address: location.address,
+              );
+              print('Splash: Driver location saved locally');
+
+              // Save location to backend
+              try {
+                final repo = DriverAuthRepository();
+                await repo.updateCurrentLocation(
+                  token: driver.token,
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                  address: location.address,
+                );
+                print('Splash: Driver location saved to backend');
+              } catch (e) {
+                print('Splash: Failed to save driver location to backend: $e');
+              }
+
+              // Navigate to home
+              Get.offAllNamed(AppRoutes.driverHome);
+            },
+          ));
       return;
+      // }
+
+      // Get.offAllNamed(AppRoutes.driverHome);
+      // return;
     }
 
     // No user logged in, go to driver login (default)
