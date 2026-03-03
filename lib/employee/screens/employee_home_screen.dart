@@ -6,6 +6,7 @@ import 'package:bestseeds/employee/screens/vehicle_tracking_map_screen.dart';
 import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -81,7 +82,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     _lastSearchTime = DateTime.now();
     Future.delayed(const Duration(milliseconds: 500), () {
       if (_lastSearchTime != null &&
-          DateTime.now().difference(_lastSearchTime!) >= const Duration(milliseconds: 450)) {
+          DateTime.now().difference(_lastSearchTime!) >=
+              const Duration(milliseconds: 450)) {
         _loadBookings();
       }
     });
@@ -167,7 +169,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           _newCount = response.counts.newBookings;
           _currentCount = response.counts.current;
           _pastCount = response.counts.past;
-          _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+          _hasMore =
+              response.pagination.currentPage < response.pagination.lastPage;
           _currentPage = 1;
           _isLoading = false;
         });
@@ -215,7 +218,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       setState(() {
         _allBookings.addAll(response.bookings);
         _currentPage = nextPage;
-        _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+        _hasMore =
+            response.pagination.currentPage < response.pagination.lastPage;
         _isLoadingMore = false;
       });
     } catch (e) {
@@ -395,10 +399,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   // Get tab string for server-side filtering
   String? get _currentTab {
     switch (selectedTabIndex) {
-      case 1: return 'new';
-      case 2: return 'current';
-      case 3: return 'past';
-      default: return null; // 'all' = no filter
+      case 1:
+        return 'new';
+      case 2:
+        return 'current';
+      case 3:
+        return 'past';
+      default:
+        return null; // 'all' = no filter
     }
   }
 
@@ -559,8 +567,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
   Widget _buildSearchBar(double width, double height) {
     return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: width * 0.05, vertical: width * 0.02),
+      padding: EdgeInsets.only(
+          left: width * 0.05, right: width * 0.05, bottom: height * 0.01),
       color: Colors.white,
       child: Row(
         children: [
@@ -610,6 +618,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             ),
           ),
           SizedBox(width: width * 0.03),
+          RefreshButton(onTap: () {
+            _loadBookings();
+          }),
           GestureDetector(
             onTap: _showFilterDialog,
             child: Container(
@@ -744,9 +755,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       ),
                       _buildFilterChip(
                         label: 'Vehicle Availability',
-                        isSelected: _selectedBookingType == 'vehicle_availability',
-                        onTap: () => setModalState(
-                            () => _selectedBookingType = 'vehicle_availability'),
+                        isSelected:
+                            _selectedBookingType == 'vehicle_availability',
+                        onTap: () => setModalState(() =>
+                            _selectedBookingType = 'vehicle_availability'),
                         width: width,
                       ),
                     ],
@@ -1050,7 +1062,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
           width: 10,
           height: 10,
           decoration: BoxDecoration(
-            color: const Color(0xFF0077C8).withValues(alpha: 0.3 + (value * 0.7)),
+            color:
+                const Color(0xFF0077C8).withValues(alpha: 0.3 + (value * 0.7)),
             shape: BoxShape.circle,
           ),
         );
@@ -1161,14 +1174,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
           // Title and category - only show if data is available
           Text(
-              booking.hatcheryName.isNotEmpty
-                  ? booking.hatcheryName
-                  : booking.displayBookingType,
-              style: TextStyle(
-                fontSize: width * 0.045,
-                fontWeight: FontWeight.bold,
-              ),
+            booking.hatcheryName.isNotEmpty
+                ? booking.hatcheryName
+                : booking.displayBookingType,
+            style: TextStyle(
+              fontSize: width * 0.045,
+              fontWeight: FontWeight.bold,
             ),
+          ),
           if (booking.categoryName.isNotEmpty)
             Text(
               booking.categoryName,
@@ -1177,7 +1190,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 color: Colors.grey,
               ),
             ),
-          if (booking.hatcheryName.isNotEmpty || booking.categoryName.isNotEmpty)
+          if (booking.hatcheryName.isNotEmpty ||
+              booking.categoryName.isNotEmpty)
             SizedBox(height: height * 0.015),
 
           // Info section

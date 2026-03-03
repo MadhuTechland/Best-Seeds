@@ -156,7 +156,7 @@ class _DropLocationsBottomSheetState extends State<DropLocationsBottomSheet> {
       widget.onUpdate();
       AppSnackbar.success('Drop status updated successfully');
       if (_isJourneyCompleted()) {
-        DriverLocationService.stop();
+        await DriverLocationService.stop();
         debugPrint('Journey completed. Location tracking stopped.');
       }
     } catch (e) {

@@ -1,4 +1,5 @@
 import 'package:bestseeds/driver/repository/driver_auth_repository.dart';
+import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
@@ -77,6 +78,9 @@ class _SplashScreenState extends State<SplashScreen> {
     final driver = await driverStorage.getDriver();
     if (driver != null) {
       print('Splash: Driver found - ${driver.name}');
+
+      // Restart background location service if it was killed during active journey
+      await BackgroundLocationService.restartIfNeeded();
 
       // Check if driver has location saved
       // if (!driverStorage.hasLocation()) {

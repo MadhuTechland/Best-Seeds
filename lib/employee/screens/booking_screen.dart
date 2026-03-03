@@ -3,6 +3,7 @@ import 'package:bestseeds/employee/models/booking_model.dart';
 import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'edit_hatchery_details_screen.dart';
@@ -77,7 +78,8 @@ class _BookingScreenState extends State<BookingScreen> {
     _lastSearchTime = DateTime.now();
     Future.delayed(const Duration(milliseconds: 500), () {
       if (_lastSearchTime != null &&
-          DateTime.now().difference(_lastSearchTime!) >= const Duration(milliseconds: 450)) {
+          DateTime.now().difference(_lastSearchTime!) >=
+              const Duration(milliseconds: 450)) {
         _loadBookings();
       }
     });
@@ -86,10 +88,14 @@ class _BookingScreenState extends State<BookingScreen> {
   // Get tab string for server-side filtering
   String? get _currentTab {
     switch (selectedTabIndex) {
-      case 1: return 'new';
-      case 2: return 'current';
-      case 3: return 'past';
-      default: return null;
+      case 1:
+        return 'new';
+      case 2:
+        return 'current';
+      case 3:
+        return 'past';
+      default:
+        return null;
     }
   }
 
@@ -153,7 +159,8 @@ class _BookingScreenState extends State<BookingScreen> {
           _newCount = response.counts.newBookings;
           _currentCount = response.counts.current;
           _pastCount = response.counts.past;
-          _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+          _hasMore =
+              response.pagination.currentPage < response.pagination.lastPage;
           _currentPage = 1;
           _isLoading = false;
         });
@@ -201,7 +208,8 @@ class _BookingScreenState extends State<BookingScreen> {
       setState(() {
         _allBookings.addAll(response.bookings);
         _currentPage = nextPage;
-        _hasMore = response.pagination.currentPage < response.pagination.lastPage;
+        _hasMore =
+            response.pagination.currentPage < response.pagination.lastPage;
         _isLoadingMore = false;
       });
     } catch (e) {
@@ -435,8 +443,8 @@ class _BookingScreenState extends State<BookingScreen> {
 
   Widget _buildSearchBar(double width, double height) {
     return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: width * 0.05, vertical: width * 0.02),
+      padding: EdgeInsets.only(
+          left: width * 0.05, right: width * 0.05, bottom: height * 0.01),
       color: Colors.white,
       child: Row(
         children: [
@@ -486,6 +494,9 @@ class _BookingScreenState extends State<BookingScreen> {
             ),
           ),
           SizedBox(width: width * 0.03),
+          RefreshButton(onTap: () {
+            _loadBookings();
+          }),
           GestureDetector(
             onTap: _showFilterDialog,
             child: Container(
@@ -620,9 +631,10 @@ class _BookingScreenState extends State<BookingScreen> {
                       ),
                       _buildFilterChip(
                         label: 'Vehicle Availability',
-                        isSelected: _selectedBookingType == 'vehicle_availability',
-                        onTap: () => setModalState(
-                            () => _selectedBookingType = 'vehicle_availability'),
+                        isSelected:
+                            _selectedBookingType == 'vehicle_availability',
+                        onTap: () => setModalState(() =>
+                            _selectedBookingType = 'vehicle_availability'),
                         width: width,
                       ),
                     ],
@@ -921,7 +933,8 @@ class _BookingScreenState extends State<BookingScreen> {
           width: 10,
           height: 10,
           decoration: BoxDecoration(
-            color: const Color(0xFF0077C8).withValues(alpha: 0.3 + (value * 0.7)),
+            color:
+                const Color(0xFF0077C8).withValues(alpha: 0.3 + (value * 0.7)),
             shape: BoxShape.circle,
           ),
         );
@@ -1032,14 +1045,14 @@ class _BookingScreenState extends State<BookingScreen> {
 
           // Title and category - only show if data is available
           Text(
-              booking.hatcheryName.isNotEmpty
-                  ? booking.hatcheryName
-                  : booking.displayBookingType,
-              style: TextStyle(
-                fontSize: width * 0.045,
-                fontWeight: FontWeight.bold,
-              ),
+            booking.hatcheryName.isNotEmpty
+                ? booking.hatcheryName
+                : booking.displayBookingType,
+            style: TextStyle(
+              fontSize: width * 0.045,
+              fontWeight: FontWeight.bold,
             ),
+          ),
           if (booking.categoryName.isNotEmpty)
             Text(
               booking.categoryName,

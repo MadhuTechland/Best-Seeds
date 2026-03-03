@@ -155,6 +155,8 @@ class AuthRepository {
     String? vehicleNumber,
     double? dropLat,
     double? dropLng,
+    int? status,
+    int? deliveryReason,
   }) async {
     return await _service.updateBooking(
       token: token,
@@ -172,6 +174,8 @@ class AuthRepository {
       vehicleNumber: vehicleNumber,
       dropLat: dropLat,
       dropLng: dropLng,
+      status: status,
+      deliveryReason: deliveryReason,
     );
   }
 

@@ -204,6 +204,8 @@ class AuthService {
     String? vehicleNumber,
     double? dropLat,
     double? dropLng,
+    int? status,
+    int? deliveryReason,
   }) {
     return _apiClient.request(
       url:
@@ -225,6 +227,8 @@ class AuthService {
         if (vehicleNumber != null) 'vehicle_number': vehicleNumber,
         if (dropLat != null) 'drop_lat': dropLat,
         if (dropLng != null) 'drop_lng': dropLng,
+        if (status != null) 'status': status,
+        if (deliveryReason != null) 'delivery_reason': deliveryReason,
       },
       token: token,
     );
@@ -258,7 +262,7 @@ class AuthService {
           '${AppConstants.baseUrl}${AppConstants.employeeChangeDriverApi}/$bookingId/change-driver',
       body: {
         if (driverId != null) 'driver_id': driverId,
-        if (driverName != null && driverName.isNotEmpty) 'driver_name': driverName,
+        'driver_name': driverName ?? '',
         'driver_mobile': driverMobile,
         'vehicle_number': vehicleNumber,
         if (vehicleStartDate != null) 'vehicle_start_date': vehicleStartDate,

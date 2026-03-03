@@ -9,12 +9,15 @@ import 'package:bestseeds/driver/screens/profile_screen.dart';
 import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:bestseeds/widgets/route_visualization.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverDashboard extends StatefulWidget {
   const DriverDashboard({super.key});
@@ -23,7 +26,8 @@ class DriverDashboard extends StatefulWidget {
   State<DriverDashboard> createState() => _DriverDashboardState();
 }
 
-class _DriverDashboardState extends State<DriverDashboard> {
+class _DriverDashboardState extends State<DriverDashboard>
+    with WidgetsBindingObserver {
   int selectedTabIndex = 2;
   final DriverStorageService _storage = DriverStorageService();
   final DriverAuthRepository _repo = DriverAuthRepository();
@@ -62,15 +66,35 @@ class _DriverDashboardState extends State<DriverDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadDriver();
     _loadLocation();
     _fetchBookings();
     _checkActiveJourney();
+    _requestNotificationPermission();
   }
 
-  /// If the background service is already running (e.g. app was reopened after
-  /// being closed during an active journey), switch to the Live tab.
+  /// Request notification permission early (on app open) so alert sounds work.
+  /// On Android 13+ (API 33+), POST_NOTIFICATIONS requires a runtime request.
+  Future<void> _requestNotificationPermission() async {
+    final status = await Permission.notification.status;
+    if (!status.isGranted) {
+      final result = await Permission.notification.request();
+      if (result.isPermanentlyDenied) {
+        if (mounted) {
+          AppSnackbar.error(
+              'Notification permission is required for GPS/internet alerts. Please enable it from app settings.');
+        }
+      }
+    }
+  }
+
+  /// If there was an active journey (e.g. app was killed/cleared during delivery),
+  /// restart the background location service and switch to the Live tab.
   Future<void> _checkActiveJourney() async {
+    // First, restart the service if it was killed but should still be running
+    await BackgroundLocationService.restartIfNeeded();
+
     final running = await BackgroundLocationService.isRunning();
     if (running && mounted) {
       setState(() {
@@ -87,7 +111,18 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When the app comes back to foreground, restart the location service
+    // if it was killed by an aggressive OEM battery optimizer.
+    if (state == AppLifecycleState.resumed) {
+      BackgroundLocationService.restartIfNeeded();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     _tabScrollController.dispose();
     super.dispose();
@@ -146,6 +181,30 @@ class _DriverDashboardState extends State<DriverDashboard> {
           _filterRoutes();
           _isLoading = false;
         });
+
+        // Auto-start location service if any route has status 4 (in-progress)
+        // Handles: new phone login, app reinstall, service killed by OS
+        final hasLiveRoute = response.routes.any(
+          (r) => r.bookings.any((b) => b.status == 4),
+        );
+        if (hasLiveRoute) {
+          final running = await BackgroundLocationService.isRunning();
+          if (!running) {
+            // Check if we have background location permission before starting
+            final locAlways = await Permission.locationAlways.status;
+            if (locAlways.isGranted) {
+              debugPrint(
+                  '_fetchBookings: Found live route but service not running, starting...');
+              await DriverLocationService.start(token);
+            } else {
+              debugPrint(
+                  '_fetchBookings: Live route found but no background location permission');
+              AppSnackbar.error(
+                  'You have an active delivery but background location is not enabled. Please enable "Allow all the time" in settings.');
+              await openAppSettings();
+            }
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -173,15 +232,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
         filtered = _allRoutes;
         break;
       case 1: // Live (routes with status 3 or 4)
-        filtered = _allRoutes
-            .where((r) => r.routeStatus == 4)
-            .toList();
+        filtered = _allRoutes.where((r) => r.routeStatus == 4).toList();
         break;
       case 2: // Assigned Bookings (status 3 - confirmed, waiting to start)
         filtered = _allRoutes.where((r) => r.routeStatus == 3).toList();
         break;
       case 3: // Past Bookings (status 5 - completed)
-        filtered = _allRoutes.where((r) => r.isCompleted || r.isFailed).toList();
+        filtered =
+            _allRoutes.where((r) => r.isCompleted || r.isFailed).toList();
         break;
       default:
         filtered = _allRoutes;
@@ -449,20 +507,29 @@ class _DriverDashboardState extends State<DriverDashboard> {
             ),
           ),
           SizedBox(width: width * 0.03),
+          Container(
+            margin: EdgeInsets.only(bottom: height * 0.015),
+            child: RefreshButton(onTap: () {
+              _fetchBookings();
+            }),
+          ),
           GestureDetector(
             onTap: _showFilterDialog,
             child: Container(
               margin: EdgeInsets.only(bottom: height * 0.015),
               padding: EdgeInsets.all(width * 0.03),
               decoration: BoxDecoration(
-                color: _hasActiveFilters ? const Color(0xFF0077C8) : Colors.grey.shade100,
+                color: _hasActiveFilters
+                    ? const Color(0xFF0077C8)
+                    : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Stack(
                 children: [
                   Icon(
                     Icons.filter_list,
-                    color: _hasActiveFilters ? Colors.white : Colors.grey.shade700,
+                    color:
+                        _hasActiveFilters ? Colors.white : Colors.grey.shade700,
                     size: width * 0.06,
                   ),
                   if (_hasActiveFilters)
@@ -553,19 +620,22 @@ class _DriverDashboardState extends State<DriverDashboard> {
                       _buildFilterChip(
                         label: 'All',
                         isSelected: _selectedBookingType == null,
-                        onTap: () => setModalState(() => _selectedBookingType = null),
+                        onTap: () =>
+                            setModalState(() => _selectedBookingType = null),
                         width: width,
                       ),
                       _buildFilterChip(
                         label: 'Spot Hatchery',
                         isSelected: _selectedBookingType == 'spot',
-                        onTap: () => setModalState(() => _selectedBookingType = 'spot'),
+                        onTap: () =>
+                            setModalState(() => _selectedBookingType = 'spot'),
                         width: width,
                       ),
                       _buildFilterChip(
                         label: 'Hatchery',
                         isSelected: _selectedBookingType == 'hatchery',
-                        onTap: () => setModalState(() => _selectedBookingType = 'hatchery'),
+                        onTap: () => setModalState(
+                            () => _selectedBookingType = 'hatchery'),
                         width: width,
                       ),
                     ],
@@ -923,7 +993,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            DateFormat('dd MMM yyyy').format(route.firstDeliveryDatetime!),
+                            DateFormat('dd MMM yyyy')
+                                .format(route.firstDeliveryDatetime!),
                             style: TextStyle(
                               fontSize: width * 0.032,
                               fontWeight: FontWeight.w600,
@@ -931,7 +1002,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
                             ),
                           ),
                           Text(
-                            DateFormat('hh:mm a').format(route.firstDeliveryDatetime!),
+                            DateFormat('hh:mm a')
+                                .format(route.firstDeliveryDatetime!),
                             style: TextStyle(
                               fontSize: width * 0.03,
                               color: Colors.grey.shade600,
@@ -1157,6 +1229,183 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
+  /// Ensures both foreground + background location and notification permissions
+  /// are granted. Returns true if all required permissions are good.
+  Future<bool> _ensureLocationPermissions() async {
+    // Step 1: Foreground location ("While using the app")
+    var locWhenInUse = await Permission.locationWhenInUse.status;
+    if (!locWhenInUse.isGranted) {
+      locWhenInUse = await Permission.locationWhenInUse.request();
+      if (!locWhenInUse.isGranted) {
+        if (locWhenInUse.isPermanentlyDenied) {
+          AppSnackbar.error(
+              'Location permission is required. Please enable it from app settings.');
+          await openAppSettings();
+        } else {
+          AppSnackbar.error(
+              'Location permission is required to track your delivery.');
+        }
+        return false;
+      }
+    }
+
+    // Step 2: Background location ("Allow all the time")
+    var locAlways = await Permission.locationAlways.status;
+    if (!locAlways.isGranted) {
+      locAlways = await Permission.locationAlways.request();
+      if (!locAlways.isGranted) {
+        // On Android 11+, locationAlways.request() may not show a dialog
+        // and returns denied — user must go to settings manually
+        AppSnackbar.error(
+            'Background location ("Allow all the time") is required for delivery tracking.');
+        await openAppSettings();
+        return false;
+      }
+    }
+
+    // Step 3: Notification permission (Android 13+) — non-blocking
+    final notif = await Permission.notification.status;
+    if (!notif.isGranted) {
+      await Permission.notification.request();
+    }
+
+    // Step 4: Battery optimization exemption — CRITICAL for OEM phones
+    // (OnePlus, Realme, Oppo, Xiaomi, Vivo, Huawei) that aggressively kill
+    // background services. Without this, the location service dies after
+    // 10-40 minutes.
+    final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
+    if (!batteryStatus.isGranted) {
+      await Permission.ignoreBatteryOptimizations.request();
+    }
+
+    // Step 5: Show OEM-specific autostart guidance on first journey start.
+    // OnePlus, Realme, Oppo, Xiaomi have a proprietary "autostart" permission
+    // that is separate from Android's battery optimization. Without enabling
+    // it, the foreground service can still be killed.
+    await _showAutoStartGuidanceIfNeeded();
+
+    return true;
+  }
+
+  /// Shows a one-time dialog guiding the user to enable autostart/background
+  /// activity for their phone brand. This is critical for OnePlus, Realme,
+  /// Oppo, Xiaomi, etc. which have their own app-kill mechanisms.
+  Future<void> _showAutoStartGuidanceIfNeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final alreadyShown = prefs.getBool('autostart_guidance_shown') ?? false;
+    if (alreadyShown) return;
+
+    final manufacturer =
+        (await _getDeviceManufacturer()).toLowerCase();
+
+    // Only show for OEMs known to aggressively kill background services
+    String? steps;
+    if (manufacturer.contains('oneplus') || manufacturer.contains('oppo')) {
+      steps = '1. Go to Settings > Battery > Battery Optimization\n'
+          '2. Find "Bestseed Drive" and select "Don\'t Optimize"\n'
+          '3. Also go to Settings > Apps > Bestseed Drive > Battery\n'
+          '4. Enable "Allow Background Activity"\n'
+          '5. Disable "Auto-launch manager" restriction if present';
+    } else if (manufacturer.contains('realme')) {
+      steps = '1. Go to Settings > Battery > App Battery Management\n'
+          '2. Find "Bestseed Drive" and select "Allow Background Activity"\n'
+          '3. Also go to Settings > App Management > Bestseed Drive\n'
+          '4. Enable "Auto-launch" for this app\n'
+          '5. Set Battery Saver to "Unrestricted"';
+    } else if (manufacturer.contains('xiaomi') ||
+        manufacturer.contains('redmi') ||
+        manufacturer.contains('poco')) {
+      steps = '1. Go to Settings > Apps > Manage Apps > Bestseed Drive\n'
+          '2. Tap "Autostart" and enable it\n'
+          '3. Go to Battery Saver > Bestseed Drive\n'
+          '4. Set to "No Restrictions"';
+    } else if (manufacturer.contains('samsung')) {
+      steps = '1. Go to Settings > Battery > Background Usage Limits\n'
+          '2. Remove "Bestseed Drive" from Sleeping/Deep Sleeping apps\n'
+          '3. Go to Settings > Apps > Bestseed Drive > Battery\n'
+          '4. Set to "Unrestricted"';
+    } else if (manufacturer.contains('vivo')) {
+      steps = '1. Go to Settings > Battery > Background Power Consumption\n'
+          '2. Find "Bestseed Drive" and enable "Allow Background Activity"\n'
+          '3. Go to Settings > Apps > Autostart and enable for this app';
+    } else if (manufacturer.contains('huawei') ||
+        manufacturer.contains('honor')) {
+      steps = '1. Go to Settings > Battery > App Launch\n'
+          '2. Find "Bestseed Drive" and set to "Manage Manually"\n'
+          '3. Enable: Auto-launch, Secondary Launch, Run in Background';
+    }
+
+    if (steps == null) return; // Stock Android, no special guidance needed
+
+    await prefs.setBool('autostart_guidance_shown', true);
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable Background Tracking'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Your phone (${manufacturer[0].toUpperCase()}${manufacturer.substring(1)}) '
+                'may stop location tracking in the background. '
+                'Please follow these steps to keep tracking active:',
+                style: const TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                steps!,
+                style: const TextStyle(fontSize: 13, height: 1.6),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'You can also open App Settings to configure this now.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('I\'ll Do It Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              openAppSettings();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0077C8),
+            ),
+            child: const Text(
+              'Open Settings',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Gets the device manufacturer name using a platform channel.
+  Future<String> _getDeviceManufacturer() async {
+    try {
+      // Use ProcessResult to get the manufacturer from Android build info.
+      // This works because we already have the android.os.Build class available.
+      final result = await const MethodChannel('bestseeds/device_info')
+          .invokeMethod<String>('getManufacturer');
+      return result ?? 'unknown';
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
   Future<void> _startJourney(DriverRoute route) async {
     // Get all booking IDs from the route
     final bookingIds = route.bookings.map((b) => b.id).toList();
@@ -1174,23 +1423,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
     // ── Request background-location & notification permissions ──
     if (Platform.isAndroid) {
-      // 1. Ensure "Allow all the time" location permission
-      final locAlways = await Permission.locationAlways.status;
-      if (!locAlways.isGranted) {
-        final result = await Permission.locationAlways.request();
-        if (!result.isGranted) {
-          AppSnackbar.error(
-              'Background location permission is required to track your delivery.');
-          return;
-        }
-      }
-
-      // 2. Notification permission (Android 13+)
-      final notif = await Permission.notification.status;
-      if (!notif.isGranted) {
-        await Permission.notification.request();
-        // Not blocking – the service can still run without the notification
-      }
+      final permissionGranted = await _ensureLocationPermissions();
+      if (!permissionGranted) return;
     }
 
     try {
@@ -1243,7 +1477,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
       AppSnackbar.success('Journey started successfully');
       debugPrint('START JOURNEY: Starting DriverLocationService');
-      DriverLocationService.start(token);
+      await DriverLocationService.start(token);
       // Switch to Live tab and refresh bookings
       setState(() {
         selectedTabIndex = 1;

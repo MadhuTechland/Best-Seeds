@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -18,10 +19,22 @@ const String _googleApiKey = 'AIzaSyDLVwCSkXWOjo49WNNwx7o0DSwomoFvbP0';
 const String _tokenKey = 'driver_token';
 const String _serviceRunningKey = 'bg_location_service_running';
 
-// Notification channel constants
+// Notification channel constants — silent foreground service notification
 const String _notificationChannelId = 'bestseeds_location_channel';
 const String _notificationChannelName = 'Location Tracking';
 const int _notificationId = 888;
+
+// Alert notification channel — loud custom sound for GPS/internet errors
+// Using v2 channel ID because Android caches channel settings; changing the ID
+// forces Android to create a fresh channel with the new sound + volume settings.
+const String _alertChannelId = 'bestseeds_alert_v4';
+const String _alertChannelName = 'Tracking Alerts';
+const int _alertNotificationId = 889;
+
+// Watchdog constants
+const Duration _watchdogInterval = Duration(minutes: 3);
+const Duration _streamTimeout = Duration(minutes: 5);
+const Duration _fallbackPollInterval = Duration(minutes: 2);
 
 class BackgroundLocationService {
   static final FlutterBackgroundService _service = FlutterBackgroundService();
@@ -31,23 +44,41 @@ class BackgroundLocationService {
     final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
         FlutterLocalNotificationsPlugin();
 
-    // Create Android notification channel
+    // Channel 1: Silent foreground service notification
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
       _notificationChannelId,
       _notificationChannelName,
       description: 'Shows notification while tracking delivery location',
-      importance: Importance.low, // Low = no sound, just persistent icon
+      importance: Importance.defaultImportance,
+      showBadge: true,
+      enableVibration: false,
+      playSound: false,
     );
 
-    await flutterLocalNotificationsPlugin
+    // Channel 2: Loud alert notification for GPS/internet errors
+    // Uses default notification sound with FLAG_INSISTENT to loop for 15 seconds.
+    const AndroidNotificationChannel alertChannel = AndroidNotificationChannel(
+      _alertChannelId,
+      _alertChannelName,
+      description: 'Alerts when GPS or internet is off during delivery',
+      importance: Importance.max,
+      showBadge: true,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    final androidPlugin = flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
+            AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.createNotificationChannel(channel);
+    await androidPlugin?.createNotificationChannel(alertChannel);
 
     await _service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: _onStart,
         autoStart: false,
+        autoStartOnBoot: true,
         isForegroundMode: true,
         foregroundServiceNotificationId: _notificationId,
         initialNotificationTitle: 'Best Seeds',
@@ -89,6 +120,25 @@ class BackgroundLocationService {
   static Future<bool> isRunning() async {
     return await _service.isRunning();
   }
+
+  /// Check if the service SHOULD be running (flag was set but service died).
+  /// Call this on app startup to auto-restart after app kill/crash.
+  static Future<bool> shouldBeRunning() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return prefs.getBool(_serviceRunningKey) ?? false;
+  }
+
+  /// Restart the service if it should be running but was killed.
+  /// Call this from splash screen or driver home screen on app startup.
+  static Future<void> restartIfNeeded() async {
+    final shouldRun = await shouldBeRunning();
+    final running = await isRunning();
+    if (shouldRun && !running) {
+      print('BackgroundLocationService: Service was killed, restarting...');
+      await _service.startService();
+    }
+  }
 }
 
 // =============================================================================
@@ -102,45 +152,160 @@ Future<void> _onStart(ServiceInstance service) async {
   // Required for plugins to work in background isolate
   DartPluginRegistrant.ensureInitialized();
 
-  Timer? locationTimer;
+  bool shouldStop = false;
+  StreamSubscription<Position>? positionSub;
+  Timer? watchdogTimer;
+  Timer? fallbackTimer;
+
+  // Track when the last position was received from the stream
+  DateTime lastStreamPositionTime = DateTime.now();
+  int streamRestartCount = 0;
+
+  // Track alert state — use timestamp cooldown so alerts repeat every 3 minutes
+  DateTime? lastAlertTime;
+
+  // Initialize the local notifications plugin for alert sounds
+  final FlutterLocalNotificationsPlugin alertNotifications =
+      FlutterLocalNotificationsPlugin();
+  await alertNotifications.initialize(
+    const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    ),
+  );
+
+  // Create the alert notification channel in the background isolate too.
+  // The main isolate creates it in initialize(), but the background isolate
+  // needs its own reference to ensure the channel exists with correct settings.
+  final androidPlugin = alertNotifications
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  await androidPlugin?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _alertChannelId,
+      _alertChannelName,
+      description: 'Alerts when GPS or internet is off during delivery',
+      importance: Importance.max,
+      showBadge: true,
+      enableVibration: true,
+      playSound: true,
+    ),
+  );
 
   // Listen for stop command from UI isolate
   service.on('stop').listen((_) {
-    locationTimer?.cancel();
+    print('BackgroundLocationService: Received stop command.');
+    shouldStop = true;
+    positionSub?.cancel();
+    watchdogTimer?.cancel();
+    fallbackTimer?.cancel();
+    // Dismiss any active alert when stopping
+    alertNotifications.cancel(_alertNotificationId);
     service.stopSelf();
   });
 
-  // The core location sending function
-  Future<void> sendLocation() async {
-    try {
-      // Re-initialize SharedPreferences in this isolate
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.reload(); // Force reload to get latest values
-      final token = prefs.getString(_tokenKey);
+  // ---------- Helper: update the foreground notification ----------
+  void updateNotification(String content) {
+    if (service is AndroidServiceInstance) {
+      service.setForegroundNotificationInfo(
+        title: 'Best Seeds - Delivering',
+        content: content,
+      );
+    }
+  }
 
-      if (token == null || token.isEmpty) {
-        print('BackgroundLocationService: No token found, stopping.');
-        locationTimer?.cancel();
-        service.stopSelf();
+  // ---------- Helper: show a loud alert notification ----------
+  // Uses a 3-minute cooldown so alerts repeat periodically while GPS/internet
+  // stays off, instead of firing only once.
+  Future<void> showErrorAlert({
+    required String title,
+    required String body,
+  }) async {
+    if (shouldStop) return;
+
+    // Allow alert if: first time, OR 3+ minutes since last alert
+    if (lastAlertTime != null) {
+      final sinceLastAlert = DateTime.now().difference(lastAlertTime!);
+      if (sinceLastAlert < const Duration(minutes: 3)) {
+        print('BackgroundLocationService: Alert cooldown — '
+            '${sinceLastAlert.inSeconds}s since last alert, skipping.');
         return;
       }
+    }
 
-      // Get current position
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 30),
-      );
+    lastAlertTime = DateTime.now();
+    print('BackgroundLocationService: ALERT — $title: $body');
 
-      print('BackgroundLocationService: Position -> '
-          'lat=${position.latitude}, lng=${position.longitude}');
+    // FLAG_INSISTENT (4) makes the default notification sound loop continuously
+    // until dismissed. Auto-cancel after 15 seconds.
+    await alertNotifications.show(
+      _alertNotificationId,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _alertChannelId,
+          _alertChannelName,
+          channelDescription: 'Alerts when GPS or internet is off during delivery',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+          ongoing: false,
+          autoCancel: true,
+          additionalFlags: Int32List.fromList([4]), // FLAG_INSISTENT
+          ticker: 'Location tracking issue!',
+        ),
+      ),
+    );
 
-      // Reverse geocode using Google HTTP API (not the geocoding package)
-      final locationName = await _reverseGeocodeHttp(
+    // Stop the looping alert sound after 15 seconds
+    Timer(const Duration(seconds: 15), () {
+      alertNotifications.cancel(_alertNotificationId);
+    });
+  }
+
+  // ---------- Helper: dismiss the alert when issue is resolved ----------
+  Future<void> dismissErrorAlert() async {
+    if (lastAlertTime == null) return;
+    lastAlertTime = null;
+    await alertNotifications.cancel(_alertNotificationId);
+    print('BackgroundLocationService: Alert dismissed — issue resolved.');
+  }
+
+  // ---------- Send a single position to the backend ----------
+  // Returns true  → keep running
+  // Returns false → stop the service (journey ended / no token / flag off)
+  Future<bool> sendPosition(Position position) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+
+    final shouldRun = prefs.getBool(_serviceRunningKey) ?? false;
+    if (!shouldRun) {
+      print('BackgroundLocationService: Service flag is false, stopping.');
+      return false;
+    }
+
+    final token = prefs.getString(_tokenKey);
+    if (token == null || token.isEmpty) {
+      print('BackgroundLocationService: No token found, stopping.');
+      await prefs.setBool(_serviceRunningKey, false);
+      return false;
+    }
+
+    print('BackgroundLocationService: Position -> '
+        'lat=${position.latitude}, lng=${position.longitude}');
+
+    // Reverse geocode (non-critical — OK if it fails)
+    String? locationName;
+    try {
+      locationName = await _reverseGeocodeHttp(
         position.latitude,
         position.longitude,
       );
+    } catch (_) {}
 
-      // POST to API
+    // POST to backend API
+    try {
       final response = await http.post(
         Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
         headers: {
@@ -153,31 +318,26 @@ Future<void> _onStart(ServiceInstance service) async {
           'lng': position.longitude,
           'location_name': locationName ?? 'Live vehicle location',
         }),
-      );
+      ).timeout(const Duration(seconds: 20));
 
       print('BackgroundLocationService: API Response ${response.statusCode}');
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body);
 
-        // Check if journey is still active
         if (data['status'] == false) {
-          print('BackgroundLocationService: Journey ended, stopping service.');
-          locationTimer?.cancel();
+          print(
+              'BackgroundLocationService: Journey ended, stopping service.');
           await prefs.setBool(_serviceRunningKey, false);
-          service.stopSelf();
-          return;
+          return false;
         }
 
-        // Update notification with current location
-        if (service is AndroidServiceInstance) {
-          service.setForegroundNotificationInfo(
-            title: 'Best Seeds - Delivering',
-            content: 'Location: ${locationName ?? 'Tracking active...'}',
-          );
-        }
+        // Success! Dismiss any active alert
+        await dismissErrorAlert();
 
-        // Send data to UI isolate (if app is open)
+        updateNotification(
+            'Location: ${locationName ?? 'Tracking active...'}');
+
         service.invoke('locationUpdate', {
           'lat': position.latitude,
           'lng': position.longitude,
@@ -187,22 +347,246 @@ Future<void> _onStart(ServiceInstance service) async {
 
         print('BackgroundLocationService: Location sent successfully.');
       } else {
-        print('BackgroundLocationService: API error ${response.statusCode}');
+        print(
+            'BackgroundLocationService: API error ${response.statusCode}');
+        updateNotification('Server error, retrying...');
       }
-    } catch (e, stack) {
-      print('BackgroundLocationService ERROR: $e');
-      print('$stack');
+    } on TimeoutException {
+      print('BackgroundLocationService: API call timed out, will retry.');
+      updateNotification('No internet - will retry when connected...');
+      await showErrorAlert(
+        title: 'Internet Issue!',
+        body: 'Please turn on your internet. Location tracking needs internet to send your location.',
+      );
+    } catch (e) {
+      print('BackgroundLocationService: Network error: $e');
+      updateNotification('No internet - will retry when connected...');
+      await showErrorAlert(
+        title: 'Internet Issue!',
+        body: 'Please turn on your internet. Location tracking needs internet to send your location.',
+      );
+    }
+
+    return true;
+  }
+
+  // ==========================================================================
+  // Helper: Start (or restart) the Geolocator position stream.
+  // Extracted so the watchdog can call it when the stream dies.
+  // ==========================================================================
+  Future<void> startPositionStream() async {
+    // Cancel any existing subscription first
+    await positionSub?.cancel();
+    positionSub = null;
+
+    if (shouldStop) return;
+
+    streamRestartCount++;
+    print('BackgroundLocationService: Starting position stream '
+        '(attempt #$streamRestartCount)');
+
+    positionSub = Geolocator.getPositionStream(
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        intervalDuration: const Duration(minutes: 2),
+        distanceFilter: 0,
+        // On stream restart attempts > 2, try the platform LocationManager
+        // instead of Fused Location Provider. Some OEMs (OnePlus, Realme)
+        // kill the FLP but leave the platform LocationManager alive.
+        forceLocationManager: streamRestartCount > 2,
+      ),
+    ).listen(
+      (position) async {
+        if (shouldStop) return;
+        lastStreamPositionTime = DateTime.now();
+        try {
+          final keepRunning = await sendPosition(position);
+          if (!keepRunning) {
+            shouldStop = true;
+            positionSub?.cancel();
+            watchdogTimer?.cancel();
+            fallbackTimer?.cancel();
+            service.stopSelf();
+          }
+        } catch (e, stack) {
+          print('BackgroundLocationService UNEXPECTED: $e');
+          print('$stack');
+        }
+      },
+      onError: (e) {
+        print('BackgroundLocationService: Stream error: $e');
+        updateNotification('GPS is OFF - Please turn on location!');
+        showErrorAlert(
+          title: 'GPS is OFF!',
+          body: 'Please turn on your location/GPS. Delivery tracking has stopped.',
+        );
+      },
+      cancelOnError: false,
+    );
+  }
+
+  // ==========================================================================
+  // Helper: Fallback polling using getCurrentPosition.
+  // Only fires when the position stream hasn't delivered a position recently
+  // (i.e., stream is dead/stalled). Prevents duplicate API calls.
+  // ==========================================================================
+  Future<void> fallbackPoll() async {
+    if (shouldStop) return;
+
+    // Skip if the stream delivered a position recently (within 3 minutes)
+    final timeSinceLastStream =
+        DateTime.now().difference(lastStreamPositionTime);
+    if (timeSinceLastStream < const Duration(minutes: 3)) {
+      print('BackgroundLocationService: Fallback skipped — stream is alive '
+          '(last ${timeSinceLastStream.inSeconds}s ago)');
+      return;
+    }
+
+    print('BackgroundLocationService: Fallback poll firing — stream silent for '
+        '${timeSinceLastStream.inMinutes}m ${timeSinceLastStream.inSeconds % 60}s');
+
+    try {
+      // First check if location service is enabled
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('BackgroundLocationService: GPS is disabled!');
+        updateNotification('GPS is OFF - Please turn on location!');
+        await showErrorAlert(
+          title: 'GPS is OFF!',
+          body: 'Please turn on your location/GPS. Delivery tracking has stopped.',
+        );
+        return;
+      }
+
+      Position? pos;
+      try {
+        pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 15),
+        );
+      } catch (_) {
+        pos = await Geolocator.getLastKnownPosition();
+      }
+
+      if (pos != null && !shouldStop) {
+        final keepRunning = await sendPosition(pos);
+        if (!keepRunning) {
+          shouldStop = true;
+          positionSub?.cancel();
+          watchdogTimer?.cancel();
+          fallbackTimer?.cancel();
+          service.stopSelf();
+        }
+      }
+    } catch (e) {
+      print('BackgroundLocationService: Fallback poll error: $e');
     }
   }
 
-  // Send immediately on start
-  await sendLocation();
+  // ==========================================================================
+  // 1. Send first position immediately
+  // ==========================================================================
+  try {
+    Position? firstPos;
+    try {
+      firstPos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 15),
+      );
+    } catch (_) {
+      firstPos = await Geolocator.getLastKnownPosition();
+    }
+    if (firstPos != null && !shouldStop) {
+      final keepRunning = await sendPosition(firstPos);
+      if (!keepRunning) {
+        service.stopSelf();
+        return;
+      }
+    }
+  } catch (e) {
+    print('BackgroundLocationService: Initial send failed: $e');
+  }
 
-  // Then every 2 minutes
-  locationTimer = Timer.periodic(
-    const Duration(minutes: 2),
-    (_) => sendLocation(),
-  );
+  // ==========================================================================
+  // 2. Start the position stream
+  // ==========================================================================
+  await startPositionStream();
+
+  // ==========================================================================
+  // 3. WATCHDOG TIMER — detects if the position stream dies silently.
+  //
+  //    OEMs like OnePlus (OxygenOS) and Realme (ColorOS) can kill the
+  //    Fused Location Provider stream after 10 minutes without any error
+  //    callback. The watchdog checks every 3 minutes: if no position was
+  //    received in the last 5 minutes, it restarts the stream.
+  // ==========================================================================
+  watchdogTimer = Timer.periodic(_watchdogInterval, (timer) async {
+    if (shouldStop) {
+      timer.cancel();
+      return;
+    }
+
+    // Check if service should still be running
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final shouldRun = prefs.getBool(_serviceRunningKey) ?? false;
+      if (!shouldRun) {
+        print('BackgroundLocationService: Watchdog detected service flag off.');
+        shouldStop = true;
+        positionSub?.cancel();
+        fallbackTimer?.cancel();
+        timer.cancel();
+        await alertNotifications.cancel(_alertNotificationId);
+        service.stopSelf();
+        return;
+      }
+    } catch (_) {}
+
+    // Check GPS status and alert if off
+    try {
+      final gpsEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!gpsEnabled) {
+        updateNotification('GPS is OFF - Please turn on location!');
+        await showErrorAlert(
+          title: 'GPS is OFF!',
+          body: 'Please turn on your location/GPS. Delivery tracking has stopped.',
+        );
+      }
+    } catch (_) {}
+
+    final timeSinceLastPosition =
+        DateTime.now().difference(lastStreamPositionTime);
+
+    if (timeSinceLastPosition > _streamTimeout) {
+      print('BackgroundLocationService: WATCHDOG — No position received for '
+          '${timeSinceLastPosition.inMinutes} minutes. Restarting stream...');
+      updateNotification('Reconnecting GPS...');
+
+      await startPositionStream();
+      // Reset the timer
+      lastStreamPositionTime = DateTime.now();
+    } else {
+      print('BackgroundLocationService: Watchdog OK — last position '
+          '${timeSinceLastPosition.inSeconds}s ago.');
+    }
+  });
+
+  // ==========================================================================
+  // 4. FALLBACK POLL TIMER — independent of the stream.
+  //
+  //    Even if the position stream AND the watchdog both fail (extreme OEM
+  //    kill), this timer uses getCurrentPosition() as a last resort.
+  //    It runs every 2 minutes. If Dart timers stop (CPU sleep), the
+  //    watchdog or stream restart on next wake will catch up.
+  // ==========================================================================
+  fallbackTimer = Timer.periodic(_fallbackPollInterval, (timer) async {
+    if (shouldStop) {
+      timer.cancel();
+      return;
+    }
+    await fallbackPoll();
+  });
 }
 
 /// iOS background handler
@@ -215,29 +599,37 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
     final token = prefs.getString(_tokenKey);
     if (token == null) return false;
 
-    final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-      timeLimit: const Duration(seconds: 30),
-    );
+    Position? position;
+    try {
+      position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 15),
+      );
+    } catch (_) {
+      position = await Geolocator.getLastKnownPosition();
+    }
+    if (position == null) return true; // No position, retry next time
 
     final locationName = await _reverseGeocodeHttp(
       position.latitude,
       position.longitude,
     );
 
-    final response = await http.post(
-      Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        'lat': position.latitude,
-        'lng': position.longitude,
-        'location_name': locationName ?? 'Live vehicle location',
-      }),
-    );
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'lat': position.latitude,
+            'lng': position.longitude,
+            'location_name': locationName ?? 'Live vehicle location',
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final data = jsonDecode(response.body);

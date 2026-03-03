@@ -61,6 +61,25 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
   double? _selectedLongitude;
   bool _isRemovingDriver = false;
   bool _isSaving = false;
+  int? _selectedBookingStatus;
+  int? _selectedDeliveryReason;
+
+  final Map<int, String> _statusLabels = {
+    1: 'Pending',
+    2: 'Confirmed',
+    3: 'Driver Assigned',
+    4: 'In Progress',
+    5: 'Delivered',
+    6: 'Failed',
+  };
+
+  final Map<int, String> _failedReasons = {
+    1: 'Delay in processing',
+    2: 'Incorrect order details',
+    3: 'Wrong quantity requested',
+    4: 'Stock quality issues',
+    5: 'Other',
+  };
 
   // Salinity values from 1 to 40
   final List<int> _salinityValues = List.generate(40, (index) => index + 1);
@@ -111,6 +130,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     // Initialize location from model
     _selectedLatitude = widget.booking.latitude;
     _selectedLongitude = widget.booking.longitude;
+
+    // Initialize booking status
+    _selectedBookingStatus = widget.booking.status.value;
   }
 
   DateTime? _parseDate(String dateString) {
@@ -242,6 +264,20 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
       return;
     }
 
+    // Validate status transition
+    if (_selectedBookingStatus != null &&
+        _selectedBookingStatus != widget.booking.status.value) {
+      if (_selectedBookingStatus == 5 && widget.booking.status.value != 4) {
+        AppSnackbar.error(
+            'Booking must be In Progress to mark as Delivered');
+        return;
+      }
+      if (_selectedBookingStatus == 6 && _selectedDeliveryReason == null) {
+        AppSnackbar.error('Please select a failed reason');
+        return;
+      }
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -275,6 +311,12 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
             : null,
         dropLat: _selectedLatitude,
         dropLng: _selectedLongitude,
+        status: _selectedBookingStatus != widget.booking.status.value
+            ? _selectedBookingStatus
+            : null,
+        deliveryReason: _selectedBookingStatus == 6
+            ? _selectedDeliveryReason
+            : null,
       );
 
       AppSnackbar.success('Booking updated successfully');
@@ -405,7 +447,17 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                     /// Vehicle Description
                     _buildTextArea(width, height, 'Vehicle Status',
                         _vehicleDescriptionController),
-                    SizedBox(height: height * 0.03),
+                    SizedBox(height: height * 0.025),
+
+                    /// Booking Status Dropdown
+                    _buildBookingStatusDropdown(width, height),
+                    SizedBox(height: height * 0.025),
+
+                    /// Failed Reason (shown only when Failed is selected)
+                    if (_selectedBookingStatus == 6) ...[
+                      _buildFailedReasonDropdown(width, height),
+                      SizedBox(height: height * 0.025),
+                    ],
 
                     /// Driver Buttons
                     Row(
@@ -450,6 +502,151 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     if (status.isCompleted) return Colors.green;
     if (status.isFailed) return Colors.red;
     return Colors.grey;
+  }
+
+  List<int> _getAllowedStatuses() {
+    final current = widget.booking.status.value;
+    switch (current) {
+      case 1:
+        return [1, 2, 6];
+      case 2:
+        return [2, 3, 6];
+      case 3:
+        return [3, 4, 6];
+      case 4:
+        return [4, 5, 6];
+      default:
+        return [current];
+    }
+  }
+
+  Widget _buildBookingStatusDropdown(double width, double height) {
+    final allowedStatuses = _getAllowedStatuses();
+    final isTerminal =
+        widget.booking.status.value == 5 || widget.booking.status.value == 6;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Booking Status',
+          style: TextStyle(
+            fontSize: width * 0.04,
+            fontWeight: FontWeight.w500,
+            color: Colors.black,
+          ),
+        ),
+        SizedBox(height: height * 0.01),
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: width * 0.04,
+            vertical: height * 0.005,
+          ),
+          decoration: BoxDecoration(
+            color: isTerminal ? Colors.grey.shade200 : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _selectedBookingStatus,
+              isExpanded: true,
+              icon: Icon(
+                Icons.keyboard_arrow_down,
+                size: width * 0.06,
+                color: isTerminal ? Colors.grey : Colors.black,
+              ),
+              style: TextStyle(
+                fontSize: width * 0.04,
+                color: Colors.grey.shade700,
+              ),
+              items: allowedStatuses.map((int status) {
+                final label = _statusLabels[status] ?? 'Status $status';
+                final isCurrent = status == widget.booking.status.value;
+                return DropdownMenuItem<int>(
+                  value: status,
+                  child: Text(
+                    isCurrent ? '$label (Current)' : label,
+                    style: TextStyle(
+                      color: isCurrent ? Colors.grey.shade500 : Colors.black,
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: isTerminal
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _selectedBookingStatus = value;
+                        if (value != 6) {
+                          _selectedDeliveryReason = null;
+                        }
+                      });
+                    },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFailedReasonDropdown(double width, double height) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Failed Reason',
+          style: TextStyle(
+            fontSize: width * 0.04,
+            fontWeight: FontWeight.w500,
+            color: Colors.black,
+          ),
+        ),
+        SizedBox(height: height * 0.01),
+        Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: width * 0.04,
+            vertical: height * 0.005,
+          ),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _selectedDeliveryReason,
+              hint: Text(
+                'Select Reason',
+                style: TextStyle(
+                  fontSize: width * 0.04,
+                  color: Colors.grey.shade500,
+                ),
+              ),
+              isExpanded: true,
+              icon: Icon(
+                Icons.keyboard_arrow_down,
+                size: width * 0.06,
+                color: Colors.black,
+              ),
+              style: TextStyle(
+                fontSize: width * 0.04,
+                color: Colors.grey.shade700,
+              ),
+              items: _failedReasons.entries.map((entry) {
+                return DropdownMenuItem<int>(
+                  value: entry.key,
+                  child: Text(entry.value),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _selectedDeliveryReason = value;
+                });
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildHeader(BuildContext context, double width, double height) {
@@ -850,6 +1047,11 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     List<DriverItem> drivers = [];
     DriverItem? selectedDriver;
 
+    // Add New Driver mode
+    bool isAddNewDriver = false;
+    final TextEditingController newDriverNameController = TextEditingController();
+    final TextEditingController newDriverMobileController = TextEditingController();
+
     // Pre-fill dates from existing driver data
     DateTime? vehicleStartDate = isEditing && existingDriver.vehicleStartDate != null
         ? DateTime.tryParse(existingDriver.vehicleStartDate!)
@@ -978,79 +1180,169 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                             ),
                             SizedBox(height: height * 0.02),
 
-                            /// ================= Driver Dropdown =================
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            /// ================= Toggle: Existing / Add New =================
+                            Row(
                               children: [
-                                Text(
-                                  'Select Driver',
-                                  style: TextStyle(
-                                    fontSize: width * 0.038,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.black87,
-                                  ),
-                                ),
-                                SizedBox(height: height * 0.01),
-                                Container(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: width * 0.04,
-                                    vertical: height * 0.005,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey.shade100,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: isLoadingDrivers
-                                      ? Padding(
-                                          padding: EdgeInsets.symmetric(
-                                              vertical: height * 0.015),
-                                          child: const Center(
-                                            child: SizedBox(
-                                              height: 20,
-                                              width: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                      : DropdownButtonHideUnderline(
-                                          child: DropdownButton<DriverItem>(
-                                            value: selectedDriver,
-                                            hint: Text(
-                                              'Select Driver',
-                                              style: TextStyle(
-                                                fontSize: width * 0.04,
-                                                color: Colors.grey.shade500,
-                                              ),
-                                            ),
-                                            isExpanded: true,
-                                            icon: Icon(
-                                              Icons.keyboard_arrow_down,
-                                              size: width * 0.06,
-                                              color: Colors.black,
-                                            ),
-                                            style: TextStyle(
-                                              fontSize: width * 0.04,
-                                              color: Colors.grey.shade700,
-                                            ),
-                                            items: drivers.map((driver) {
-                                              return DropdownMenuItem<
-                                                  DriverItem>(
-                                                value: driver,
-                                                child: Text(driver.displayName),
-                                              );
-                                            }).toList(),
-                                            onChanged: (value) {
-                                              setModalState(() {
-                                                selectedDriver = value;
-                                              });
-                                            },
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: () => setModalState(() {
+                                      isAddNewDriver = false;
+                                    }),
+                                    child: Container(
+                                      padding: EdgeInsets.symmetric(
+                                          vertical: height * 0.012),
+                                      decoration: BoxDecoration(
+                                        color: !isAddNewDriver
+                                            ? const Color(0xFF0077C8)
+                                            : Colors.grey.shade100,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          'Select Existing',
+                                          style: TextStyle(
+                                            fontSize: width * 0.036,
+                                            fontWeight: FontWeight.w600,
+                                            color: !isAddNewDriver
+                                                ? Colors.white
+                                                : Colors.black87,
                                           ),
                                         ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: width * 0.03),
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: () => setModalState(() {
+                                      isAddNewDriver = true;
+                                      selectedDriver = null;
+                                    }),
+                                    child: Container(
+                                      padding: EdgeInsets.symmetric(
+                                          vertical: height * 0.012),
+                                      decoration: BoxDecoration(
+                                        color: isAddNewDriver
+                                            ? const Color(0xFF0077C8)
+                                            : Colors.grey.shade100,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          'Add New Driver',
+                                          style: TextStyle(
+                                            fontSize: width * 0.036,
+                                            fontWeight: FontWeight.w600,
+                                            color: isAddNewDriver
+                                                ? Colors.white
+                                                : Colors.black87,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
+                            SizedBox(height: height * 0.02),
+
+                            /// ================= Driver Selection =================
+                            if (!isAddNewDriver) ...[
+                              // Existing driver dropdown
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Select Driver',
+                                    style: TextStyle(
+                                      fontSize: width * 0.038,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black87,
+                                    ),
+                                  ),
+                                  SizedBox(height: height * 0.01),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: width * 0.04,
+                                      vertical: height * 0.005,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade100,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: isLoadingDrivers
+                                        ? Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: height * 0.015),
+                                            child: const Center(
+                                              child: SizedBox(
+                                                height: 20,
+                                                width: 20,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        : DropdownButtonHideUnderline(
+                                            child: DropdownButton<DriverItem>(
+                                              value: selectedDriver,
+                                              hint: Text(
+                                                'Select Driver',
+                                                style: TextStyle(
+                                                  fontSize: width * 0.04,
+                                                  color: Colors.grey.shade500,
+                                                ),
+                                              ),
+                                              isExpanded: true,
+                                              icon: Icon(
+                                                Icons.keyboard_arrow_down,
+                                                size: width * 0.06,
+                                                color: Colors.black,
+                                              ),
+                                              style: TextStyle(
+                                                fontSize: width * 0.04,
+                                                color: Colors.grey.shade700,
+                                              ),
+                                              items: drivers.map((driver) {
+                                                return DropdownMenuItem<
+                                                    DriverItem>(
+                                                  value: driver,
+                                                  child:
+                                                      Text(driver.displayName),
+                                                );
+                                              }).toList(),
+                                              onChanged: (value) {
+                                                setModalState(() {
+                                                  selectedDriver = value;
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                  ),
+                                ],
+                              ),
+                            ] else ...[
+                              // Add new driver - manual entry
+                              _buildBottomSheetTextField(
+                                width,
+                                height,
+                                'Driver Name (Optional)',
+                                newDriverNameController,
+                                'Enter driver name',
+                              ),
+                              SizedBox(height: height * 0.02),
+                              _buildBottomSheetTextField(
+                                width,
+                                height,
+                                'Driver Mobile *',
+                                newDriverMobileController,
+                                'Enter 10-digit mobile number',
+                                TextInputType.phone,
+                              ),
+                            ],
                             SizedBox(height: height * 0.025),
 
                             /// ================= Vehicle Number =================
@@ -1377,9 +1669,21 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                         onPressed: isLoading
                             ? null
                             : () async {
-                                if (selectedDriver == null) {
-                                  AppSnackbar.error('Please select a driver');
-                                  return;
+                                // Validate based on mode
+                                if (isAddNewDriver) {
+                                  if (newDriverMobileController.text.trim().isEmpty) {
+                                    AppSnackbar.error('Please enter driver mobile number');
+                                    return;
+                                  }
+                                  if (newDriverMobileController.text.trim().length < 10) {
+                                    AppSnackbar.error('Please enter a valid 10-digit mobile number');
+                                    return;
+                                  }
+                                } else {
+                                  if (selectedDriver == null) {
+                                    AppSnackbar.error('Please select a driver');
+                                    return;
+                                  }
                                 }
 
                                 if (vehicleNumberController.text.isEmpty) {
@@ -1402,9 +1706,13 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                   await _repo.changeDriver(
                                     token: token,
                                     bookingId: widget.booking.bookingId,
-                                    driverId: selectedDriver!.id,
-                                    driverName: selectedDriver!.name.isNotEmpty ? selectedDriver!.name : null,
-                                    driverMobile: selectedDriver!.mobile,
+                                    driverId: isAddNewDriver ? null : selectedDriver!.id,
+                                    driverName: isAddNewDriver
+                                        ? newDriverNameController.text.trim()
+                                        : (selectedDriver!.name.isNotEmpty ? selectedDriver!.name : null),
+                                    driverMobile: isAddNewDriver
+                                        ? newDriverMobileController.text.trim()
+                                        : selectedDriver!.mobile,
                                     vehicleNumber: vehicleNumberController.text,
                                     vehicleStartDate: vehicleStartDate != null
                                         ? _formatDateForApi(vehicleStartDate!)
@@ -1452,9 +1760,11 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                 ),
                               )
                             : Text(
-                                widget.booking.driverDetails.isAssigned
-                                    ? 'Change Driver'
-                                    : 'Add Driver',
+                                isAddNewDriver
+                                    ? 'Add New Driver'
+                                    : (widget.booking.driverDetails.isAssigned
+                                        ? 'Change Driver'
+                                        : 'Add Driver'),
                                 style: TextStyle(
                                   fontSize: width * 0.045,
                                   fontWeight: FontWeight.bold,

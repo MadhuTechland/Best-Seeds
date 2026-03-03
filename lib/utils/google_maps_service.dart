@@ -284,11 +284,69 @@ class GoogleMapsService {
         'driver_split_index': driverSplitIndex,
         'driver_progress_fraction': driverFraction,
         'remaining_duration_seconds': remainingDurationSeconds,
+        'cumulative_distances': cumulativeDistances,
       };
     } catch (e) {
       debugPrint('Error getting route with stops: $e');
       return {};
     }
+  }
+
+  /// Generate sub-stops between two fractions along the route polyline.
+  static Future<List<Map<String, dynamic>>> generateSubStops({
+    required List<LatLng> fullPolyline,
+    required List<double> cumulativeDistances,
+    required double startFraction,
+    required double endFraction,
+    required int totalDurationSeconds,
+    int count = 3,
+  }) async {
+    if (fullPolyline.isEmpty || cumulativeDistances.isEmpty) return [];
+
+    final totalDist = cumulativeDistances.last;
+    final startDist = totalDist * startFraction;
+    final endDist = totalDist * endFraction;
+    final segmentDist = endDist - startDist;
+    if (segmentDist <= 0) return [];
+
+    final interval = segmentDist / (count + 1);
+    List<Map<String, dynamic>> subStops = [];
+
+    for (int i = 1; i <= count; i++) {
+      final targetDist = startDist + interval * i;
+      final point = _interpolatePointOnPolyline(
+        targetDist,
+        fullPolyline,
+        cumulativeDistances,
+      );
+      final fraction = targetDist / totalDist;
+      subStops.add({
+        'location': point,
+        'estimated_seconds': (totalDurationSeconds * fraction).round(),
+        'distance_fraction': fraction,
+      });
+    }
+
+    // Reverse geocode all sub-stops in parallel
+    final names = await Future.wait(
+      subStops.map((s) => reverseGeocode(s['location'] as LatLng)),
+    );
+    for (int i = 0; i < subStops.length; i++) {
+      subStops[i]['name'] = names[i] ?? 'Unknown';
+    }
+
+    // Remove duplicates and unknowns
+    List<Map<String, dynamic>> unique = [];
+    Set<String> seen = {};
+    for (var stop in subStops) {
+      final name = stop['name'] as String;
+      if (name != 'Unknown' && !seen.contains(name)) {
+        unique.add(stop);
+        seen.add(name);
+      }
+    }
+
+    return unique;
   }
 
   /// Interpolate a point along the polyline at a given cumulative distance

@@ -162,7 +162,7 @@ class BookingDriverDetails {
     );
   }
 
-  bool get isAssigned => name.isNotEmpty && mobile.isNotEmpty;
+  bool get isAssigned => mobile.isNotEmpty;
 }
 
 class BookingStatus {
@@ -216,12 +216,14 @@ class BookingPickup {
   final double? lat;
   final double? lng;
   final String? vehicleStartedDate;
+  final String? inProgressAt;
 
   BookingPickup({
     this.locationName,
     this.lat,
     this.lng,
     this.vehicleStartedDate,
+    this.inProgressAt,
   });
 
   factory BookingPickup.fromJson(Map<String, dynamic> json) {
@@ -230,6 +232,7 @@ class BookingPickup {
       lat: json['lat'] != null ? double.tryParse(json['lat'].toString()) : null,
       lng: json['lng'] != null ? double.tryParse(json['lng'].toString()) : null,
       vehicleStartedDate: json['vehicle_started_date'],
+      inProgressAt: json['in_progress_at'],
     );
   }
 }
