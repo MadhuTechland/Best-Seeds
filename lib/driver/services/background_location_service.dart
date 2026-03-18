@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math' show min, pow;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -12,8 +14,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // --- Constants (duplicated here because this file must be self-contained
 //     for the background isolate; it cannot import Flutter-widget-dependent files) ---
+// const String _baseUrl =
+//     'https://bestseed.in/api/';
+// const String _baseUrl =
+//     'http://192.168.29.111:8000/api/';
 const String _baseUrl =
-    'https://aliceblue-wallaby-326294.hostingersite.com/api/';
+    'http://127.0.0.1:8000/api/';
 const String _locationUpdateEndpoint = 'driver/location/update';
 const String _trackingAlertEndpoint = 'driver/tracking-alert';
 const String _googleApiKey = 'AIzaSyDLVwCSkXWOjo49WNNwx7o0DSwomoFvbP0';
@@ -36,6 +42,9 @@ const int _alertNotificationId = 889;
 const Duration _watchdogInterval = Duration(minutes: 3);
 const Duration _streamTimeout = Duration(minutes: 5);
 const Duration _fallbackPollInterval = Duration(minutes: 2);
+const Duration _connectivityCheckInterval = Duration(seconds: 30);
+const int _maxQueueSize = 50;
+const Duration _maxStalePositionAge = Duration(minutes: 10);
 
 class BackgroundLocationService {
   static final FlutterBackgroundService _service = FlutterBackgroundService();
@@ -138,6 +147,13 @@ class BackgroundLocationService {
     if (shouldRun && !running) {
       print('BackgroundLocationService: Service was killed, restarting...');
       await _service.startService();
+      // Verify it actually started
+      await Future.delayed(const Duration(seconds: 2));
+      final nowRunning = await isRunning();
+      if (!nowRunning) {
+        print('BackgroundLocationService: Restart failed, retrying...');
+        await _service.startService();
+      }
     }
   }
 }
@@ -157,6 +173,7 @@ Future<void> _onStart(ServiceInstance service) async {
   StreamSubscription<Position>? positionSub;
   Timer? watchdogTimer;
   Timer? fallbackTimer;
+  Timer? connectivityCheckTimer;
 
   // Track when the last position was received from the stream
   DateTime lastStreamPositionTime = DateTime.now();
@@ -164,6 +181,22 @@ Future<void> _onStart(ServiceInstance service) async {
 
   // Track alert state — use timestamp cooldown so alerts repeat every 3 minutes
   DateTime? lastAlertTime;
+
+  // Connectivity & retry state
+  bool isOnline = true;
+  int consecutiveFailures = 0;
+  List<Map<String, dynamic>> pendingLocationQueue = [];
+
+  // Connectivity check helper
+  Future<bool> hasInternetConnectivity() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 5));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
 
   // Initialize the local notifications plugin for alert sounds
   final FlutterLocalNotificationsPlugin alertNotifications =
@@ -199,6 +232,7 @@ Future<void> _onStart(ServiceInstance service) async {
     positionSub?.cancel();
     watchdogTimer?.cancel();
     fallbackTimer?.cancel();
+    connectivityCheckTimer?.cancel();
     // Dismiss any active alert when stopping
     alertNotifications.cancel(_alertNotificationId);
     service.stopSelf();
@@ -300,6 +334,58 @@ Future<void> _onStart(ServiceInstance service) async {
     print('BackgroundLocationService: Alert dismissed — issue resolved.');
   }
 
+  // Helper: Queue a failed position for retry when connectivity returns
+  void _queuePosition(Position position) {
+    pendingLocationQueue.add({
+      'lat': position.latitude,
+      'lng': position.longitude,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+    if (pendingLocationQueue.length > _maxQueueSize) {
+      pendingLocationQueue.removeAt(0); // Drop oldest
+    }
+    print('BackgroundLocationService: Queued position '
+        '(${pendingLocationQueue.length} in queue)');
+  }
+
+  // Helper: Flush queued positions when connectivity returns
+  Future<void> flushLocationQueue() async {
+    if (pendingLocationQueue.isEmpty) return;
+
+    print('BackgroundLocationService: Flushing '
+        '${pendingLocationQueue.length} queued positions...');
+
+    // Send only the most recent queued position (backend only needs latest)
+    final latest = pendingLocationQueue.last;
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_tokenKey);
+    if (token == null || token.isEmpty) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'lat': latest['lat'],
+          'lng': latest['lng'],
+          'location_name': 'Reconnected - live location',
+        }),
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        pendingLocationQueue.clear();
+        consecutiveFailures = 0;
+        print('BackgroundLocationService: Queue flushed successfully.');
+      }
+    } catch (e) {
+      print('BackgroundLocationService: Queue flush failed: $e');
+    }
+  }
+
   // ---------- Send a single position to the backend ----------
   // Returns true  → keep running
   // Returns false → stop the service (journey ended / no token / flag off)
@@ -360,7 +446,10 @@ Future<void> _onStart(ServiceInstance service) async {
           return false;
         }
 
-        // Success! Dismiss any active alert
+        // Success! Reset backoff and flush queue
+        consecutiveFailures = 0;
+        isOnline = true;
+        pendingLocationQueue.clear();
         await dismissErrorAlert();
 
         updateNotification(
@@ -377,10 +466,14 @@ Future<void> _onStart(ServiceInstance service) async {
       } else {
         print(
             'BackgroundLocationService: API error ${response.statusCode}');
+        consecutiveFailures++;
         updateNotification('Server error, retrying...');
       }
     } on TimeoutException {
       print('BackgroundLocationService: API call timed out, will retry.');
+      consecutiveFailures++;
+      isOnline = false;
+      _queuePosition(position);
       updateNotification('No internet - will retry when connected...');
       await showErrorAlert(
         title: 'Internet Issue!',
@@ -388,6 +481,9 @@ Future<void> _onStart(ServiceInstance service) async {
       );
     } catch (e) {
       print('BackgroundLocationService: Network error: $e');
+      consecutiveFailures++;
+      isOnline = false;
+      _queuePosition(position);
       updateNotification('No internet - will retry when connected...');
       await showErrorAlert(
         title: 'Internet Issue!',
@@ -494,6 +590,15 @@ Future<void> _onStart(ServiceInstance service) async {
         );
       } catch (_) {
         pos = await Geolocator.getLastKnownPosition();
+        // Reject stale positions older than 10 minutes
+        if (pos != null && pos.timestamp != null) {
+          final age = DateTime.now().difference(pos.timestamp!);
+          if (age > _maxStalePositionAge) {
+            print('BackgroundLocationService: Stale position '
+                '(${age.inMinutes}m old), discarding.');
+            pos = null;
+          }
+        }
       }
 
       if (pos != null && !shouldStop) {
@@ -523,6 +628,14 @@ Future<void> _onStart(ServiceInstance service) async {
       );
     } catch (_) {
       firstPos = await Geolocator.getLastKnownPosition();
+      if (firstPos != null && firstPos.timestamp != null) {
+        final age = DateTime.now().difference(firstPos.timestamp!);
+        if (age > _maxStalePositionAge) {
+          print('BackgroundLocationService: Initial position stale '
+              '(${age.inMinutes}m old), discarding.');
+          firstPos = null;
+        }
+      }
     }
     if (firstPos != null && !shouldStop) {
       final keepRunning = await sendPosition(firstPos);
@@ -564,6 +677,7 @@ Future<void> _onStart(ServiceInstance service) async {
         shouldStop = true;
         positionSub?.cancel();
         fallbackTimer?.cancel();
+        connectivityCheckTimer?.cancel();
         timer.cancel();
         await alertNotifications.cancel(_alertNotificationId);
         service.stopSelf();
@@ -614,6 +728,41 @@ Future<void> _onStart(ServiceInstance service) async {
       return;
     }
     await fallbackPoll();
+  });
+
+  // ==========================================================================
+  // 5. CONNECTIVITY CHECK TIMER — detects when internet returns.
+  //
+  //    Checks every 30 seconds. When connectivity is restored after being
+  //    offline, immediately flushes the queued position and triggers a
+  //    fresh location send. This ensures minimal delay when reconnecting.
+  // ==========================================================================
+  connectivityCheckTimer =
+      Timer.periodic(_connectivityCheckInterval, (timer) async {
+    if (shouldStop) {
+      timer.cancel();
+      return;
+    }
+
+    final nowOnline = await hasInternetConnectivity();
+
+    if (nowOnline && !isOnline) {
+      // Connectivity just restored!
+      print('BackgroundLocationService: Connectivity restored!');
+      isOnline = true;
+      consecutiveFailures = 0;
+      await dismissErrorAlert();
+      updateNotification('Reconnected - tracking active...');
+
+      // Flush queued positions
+      await flushLocationQueue();
+
+      // Trigger immediate fresh position
+      await fallbackPoll();
+    } else if (!nowOnline && isOnline) {
+      print('BackgroundLocationService: Connectivity lost.');
+      isOnline = false;
+    }
   });
 }
 

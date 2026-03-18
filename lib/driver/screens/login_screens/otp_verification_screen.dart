@@ -175,8 +175,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                 children: List.generate(
                                   6,
                                   (index) => SizedBox(
-                                    width: width * 0.12,
-                                    height: width * 0.14,
+                                    width: (width - width * 0.12 - 30) / 6,
+                                    height: width * 0.13,
                                     child: TextField(
                                       controller: otpControllers[index],
                                       focusNode: focusNodes[index],
@@ -184,11 +184,15 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                       keyboardType: TextInputType.number,
                                       maxLength: 1,
                                       style: TextStyle(
-                                        fontSize: width * 0.06,
+                                        fontSize: width * 0.05,
                                         fontWeight: FontWeight.bold,
                                       ),
                                       decoration: InputDecoration(
                                         counterText: '',
+                                        isDense: true,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                vertical: 12),
                                         border: OutlineInputBorder(
                                           borderRadius:
                                               BorderRadius.circular(12),

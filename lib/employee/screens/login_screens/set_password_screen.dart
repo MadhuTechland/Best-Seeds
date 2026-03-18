@@ -184,8 +184,8 @@ class SetPasswordScreen extends StatelessWidget {
                                             return;
                                           }
 
-                                          if (newPass.length < 6) {
-                                            AppSnackbar.error('Password must be at least 6 characters');
+                                          if (newPass.length < 8) {
+                                            AppSnackbar.error('Password must be at least 8 characters');
                                             return;
                                           }
 

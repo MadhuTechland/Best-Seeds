@@ -199,9 +199,15 @@ class _DriverDashboardState extends State<DriverDashboard>
             } else {
               debugPrint(
                   '_fetchBookings: Live route found but no background location permission');
-              AppSnackbar.error(
-                  'You have an active delivery but background location is not enabled. Please enable "Allow all the time" in settings.');
-              await openAppSettings();
+              final shouldOpen = await _showPermissionDialog(
+                title: 'Background Location Needed',
+                message:
+                    'You have an active delivery but background location is not enabled.\n\n'
+                    'Please tap "Open Settings" and select "Allow all the time" for Location to resume tracking.',
+                icon: Icons.my_location_rounded,
+                iconColor: const Color(0xFF0077C8),
+              );
+              if (shouldOpen) await openAppSettings();
             }
           }
         }
@@ -896,181 +902,155 @@ class _DriverDashboardState extends State<DriverDashboard>
     final packingDate = route.packingDate != null
         ? DateFormat('dd MMM yyyy').format(route.packingDate!)
         : 'N/A';
-    final packingDateFormatted = route.packingDate != null
-        ? DateFormat('dd/MM/yyyy').format(route.packingDate!)
-        : 'N/A';
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          /// Date Header
+          // Header: Hatchery name + Date + Status chips
           Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: width * 0.04,
-              vertical: height * 0.015,
-            ),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             decoration: BoxDecoration(
-              color: Colors.grey.shade50,
+              color: const Color(0xFFF0F7FF),
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  packingDate,
-                  style: TextStyle(
-                    fontSize: width * 0.04,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          /// Card Content
-          Padding(
-            padding: EdgeInsets.all(width * 0.04),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                /// Booking IDs Row
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
                       child: Text(
-                        'ID: ${route.bookingIdsString}',
-                        style: TextStyle(
-                          fontSize: width * 0.038,
-                          fontWeight: FontWeight.w600,
+                        route.hatcheryName,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1F2937),
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Text(
-                      '${route.totalDrops} Drops',
-                      style: TextStyle(
-                        fontSize: width * 0.032,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: height * 0.012),
-
-                /// Hatchery Name with Delivery Date
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        route.hatcheryName,
-                        style: TextStyle(
-                          fontSize: width * 0.042,
-                          fontWeight: FontWeight.bold,
+                    if (route.firstDeliveryDatetime != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0077C8).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          DateFormat('dd MMM, hh:mm a')
+                              .format(route.firstDeliveryDatetime!),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF0077C8),
+                          ),
                         ),
                       ),
-                    ),
-                    if (route.firstDeliveryDatetime != null)
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            DateFormat('dd MMM yyyy')
-                                .format(route.firstDeliveryDatetime!),
-                            style: TextStyle(
-                              fontSize: width * 0.032,
-                              fontWeight: FontWeight.w600,
-                              color: const Color(0xFF0077C8),
-                            ),
-                          ),
-                          Text(
-                            DateFormat('hh:mm a')
-                                .format(route.firstDeliveryDatetime!),
-                            style: TextStyle(
-                              fontSize: width * 0.03,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
                   ],
                 ),
-
-                /// Category
-                if (route.categoryName.isNotEmpty)
-                  Text(
-                    route.categoryName,
-                    style: TextStyle(
-                      fontSize: width * 0.035,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                SizedBox(height: height * 0.015),
-
-                /// Route Visualization
-                buildRouteVisualization(width, height, route),
-
-                SizedBox(height: height * 0.015),
-
-                /// Pieces and Date Info
+                const SizedBox(height: 6),
+                // Info chips row
                 Row(
                   children: [
-                    Icon(
-                      Icons.inventory_2_outlined,
-                      size: width * 0.045,
-                      color: Colors.grey.shade600,
-                    ),
-                    SizedBox(width: width * 0.02),
+                    _infoChip(Icons.tag_rounded,
+                        route.bookingIdsString, Colors.grey.shade700),
+                    const SizedBox(width: 8),
+                    _infoChip(Icons.inventory_2_outlined,
+                        '${route.totalPieces} pcs', Colors.grey.shade700),
+                    const SizedBox(width: 8),
+                    _infoChip(Icons.place_outlined,
+                        '${route.totalDrops} drops', Colors.grey.shade700),
+                    if (route.categoryName.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      _infoChip(Icons.category_outlined,
+                          route.categoryName, Colors.grey.shade700),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Route Visualization
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+            child: buildRouteVisualization(width, height, route),
+          ),
+
+          // Packing date + Action Button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.calendar_today_outlined,
+                        size: 14, color: Colors.grey.shade500),
+                    const SizedBox(width: 4),
                     Text(
-                      '${route.totalPieces} Pieces',
+                      'Packing: $packingDate',
                       style: TextStyle(
-                        fontSize: width * 0.038,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    SizedBox(width: width * 0.06),
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: width * 0.04,
-                      color: Colors.grey.shade600,
-                    ),
-                    SizedBox(width: width * 0.02),
-                    Text(
-                      packingDateFormatted,
-                      style: TextStyle(
-                        fontSize: width * 0.038,
-                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
-
-                SizedBox(height: height * 0.02),
-
-                /// Action Button
+                const SizedBox(height: 10),
                 _buildActionButton(width, height, route),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _infoChip(IconData icon, String text, Color color) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 3),
+            Flexible(
+              child: Text(
+                text,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1238,9 +1218,15 @@ class _DriverDashboardState extends State<DriverDashboard>
       locWhenInUse = await Permission.locationWhenInUse.request();
       if (!locWhenInUse.isGranted) {
         if (locWhenInUse.isPermanentlyDenied) {
-          AppSnackbar.error(
-              'Location permission is required. Please enable it from app settings.');
-          await openAppSettings();
+          final shouldOpen = await _showPermissionDialog(
+            title: 'Location Permission Required',
+            message:
+                'To start your journey, we need access to your location so the vendor and customer can track the delivery in real time.\n\n'
+                'Please tap "Open Settings" and enable Location permission for this app.',
+            icon: Icons.location_on_rounded,
+            iconColor: const Color(0xFF0077C8),
+          );
+          if (shouldOpen) await openAppSettings();
         } else {
           AppSnackbar.error(
               'Location permission is required to track your delivery.');
@@ -1256,9 +1242,15 @@ class _DriverDashboardState extends State<DriverDashboard>
       if (!locAlways.isGranted) {
         // On Android 11+, locationAlways.request() may not show a dialog
         // and returns denied — user must go to settings manually
-        AppSnackbar.error(
-            'Background location ("Allow all the time") is required for delivery tracking.');
-        await openAppSettings();
+        final shouldOpen = await _showPermissionDialog(
+          title: 'Background Location Needed',
+          message:
+              'For continuous delivery tracking, we need location access even when the app is in the background.\n\n'
+              'Please tap "Open Settings" and select "Allow all the time" for Location.',
+          icon: Icons.my_location_rounded,
+          iconColor: const Color(0xFF0077C8),
+        );
+        if (shouldOpen) await openAppSettings();
         return false;
       }
     }
@@ -1285,6 +1277,83 @@ class _DriverDashboardState extends State<DriverDashboard>
     await _showAutoStartGuidanceIfNeeded();
 
     return true;
+  }
+
+  /// Shows a dialog explaining why a permission is needed and asks the driver
+  /// whether to open settings. Returns true if the driver taps "Open Settings".
+  Future<bool> _showPermissionDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+    required Color iconColor,
+  }) async {
+    if (!mounted) return false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 32),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'Not Now',
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0077C8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
+              'Open Settings',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return result ?? false;
   }
 
   /// Shows a one-time dialog guiding the user to enable autostart/background
