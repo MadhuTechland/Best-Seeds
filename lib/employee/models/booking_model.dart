@@ -206,7 +206,7 @@ class BookingStatus {
       case 3:
         return 'Driver Assigned';
       case 4:
-        return 'In Progress';
+        return 'In Transit';
       case 5:
         return 'Completed';
       case 6:

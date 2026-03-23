@@ -1,25 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' show min, pow;
 import 'dart:typed_data';
 import 'dart:ui';
-
-import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'tracking_database.dart';
+import 'tracking_work_manager.dart';
+
 // --- Constants (duplicated here because this file must be self-contained
 //     for the background isolate; it cannot import Flutter-widget-dependent files) ---
-const String _baseUrl =
-    'https://bestseed.in/api/';
+// const String _baseUrl =
+//     'http://192.168.0.104:8000/api/';
 // const String _baseUrl =
 //     'http://192.168.29.111:8000/api/';
-// const String _baseUrl =
-//     'http://127.0.0.1:8000/api/';
+const String _baseUrl =
+    'https://bestseed.in/api/';
 const String _locationUpdateEndpoint = 'driver/location/update';
 const String _trackingAlertEndpoint = 'driver/tracking-alert';
 const String _googleApiKey = 'AIzaSyDLVwCSkXWOjo49WNNwx7o0DSwomoFvbP0';
@@ -43,8 +43,8 @@ const Duration _watchdogInterval = Duration(minutes: 3);
 const Duration _streamTimeout = Duration(minutes: 5);
 const Duration _fallbackPollInterval = Duration(minutes: 2);
 const Duration _connectivityCheckInterval = Duration(seconds: 30);
-const int _maxQueueSize = 50;
 const Duration _maxStalePositionAge = Duration(minutes: 10);
+const Duration _dbCleanupInterval = Duration(hours: 1);
 
 class BackgroundLocationService {
   static final FlutterBackgroundService _service = FlutterBackgroundService();
@@ -104,7 +104,7 @@ class BackgroundLocationService {
     );
   }
 
-  /// Start the background location service.
+  /// Start the background location service + WorkManager guardian.
   static Future<void> start() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, true);
@@ -113,9 +113,13 @@ class BackgroundLocationService {
     if (!isRunning) {
       await _service.startService();
     }
+
+    // Register WorkManager guardian — OS-guaranteed periodic task
+    // that will restart the foreground service if OEM kills it.
+    await registerGuardianTask();
   }
 
-  /// Stop the background location service.
+  /// Stop the background location service + cancel WorkManager guardian.
   static Future<void> stop() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, false);
@@ -124,6 +128,12 @@ class BackgroundLocationService {
     if (isRunning) {
       _service.invoke('stop');
     }
+
+    // Cancel the guardian since journey is over
+    await cancelGuardianTask();
+
+    // Clear the SQLite queue
+    await TrackingDatabase.clearAll();
   }
 
   /// Check if the service is currently running.
@@ -154,6 +164,9 @@ class BackgroundLocationService {
         print('BackgroundLocationService: Restart failed, retrying...');
         await _service.startService();
       }
+
+      // Re-register WorkManager guardian in case it was lost
+      await registerGuardianTask();
     }
   }
 }
@@ -174,6 +187,7 @@ Future<void> _onStart(ServiceInstance service) async {
   Timer? watchdogTimer;
   Timer? fallbackTimer;
   Timer? connectivityCheckTimer;
+  Timer? dbCleanupTimer;
 
   // Track when the last position was received from the stream
   DateTime lastStreamPositionTime = DateTime.now();
@@ -185,7 +199,6 @@ Future<void> _onStart(ServiceInstance service) async {
   // Connectivity & retry state
   bool isOnline = true;
   int consecutiveFailures = 0;
-  List<Map<String, dynamic>> pendingLocationQueue = [];
 
   // Connectivity check helper
   Future<bool> hasInternetConnectivity() async {
@@ -233,6 +246,7 @@ Future<void> _onStart(ServiceInstance service) async {
     watchdogTimer?.cancel();
     fallbackTimer?.cancel();
     connectivityCheckTimer?.cancel();
+    dbCleanupTimer?.cancel();
     // Dismiss any active alert when stopping
     alertNotifications.cancel(_alertNotificationId);
     service.stopSelf();
@@ -334,34 +348,38 @@ Future<void> _onStart(ServiceInstance service) async {
     print('BackgroundLocationService: Alert dismissed — issue resolved.');
   }
 
-  // Helper: Queue a failed position for retry when connectivity returns
-  void _queuePosition(Position position) {
-    pendingLocationQueue.add({
-      'lat': position.latitude,
-      'lng': position.longitude,
-      'timestamp': DateTime.now().toIso8601String(),
-    });
-    if (pendingLocationQueue.length > _maxQueueSize) {
-      pendingLocationQueue.removeAt(0); // Drop oldest
+  // ---------- Helper: Queue a failed position to SQLite ----------
+  Future<void> queuePosition(Position position, {String? locationName}) async {
+    try {
+      await TrackingDatabase.insert(
+        lat: position.latitude,
+        lng: position.longitude,
+        locationName: locationName,
+      );
+      final count = await TrackingDatabase.getUnsentCount();
+      print('BackgroundLocationService: Queued position to SQLite '
+          '($count unsent in queue)');
+    } catch (e) {
+      print('BackgroundLocationService: SQLite queue failed: $e');
     }
-    print('BackgroundLocationService: Queued position '
-        '(${pendingLocationQueue.length} in queue)');
   }
 
-  // Helper: Flush queued positions when connectivity returns
+  // ---------- Helper: Flush queued positions from SQLite ----------
   Future<void> flushLocationQueue() async {
-    if (pendingLocationQueue.isEmpty) return;
-
-    print('BackgroundLocationService: Flushing '
-        '${pendingLocationQueue.length} queued positions...');
-
-    // Send only the most recent queued position (backend only needs latest)
-    final latest = pendingLocationQueue.last;
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString(_tokenKey);
-    if (token == null || token.isEmpty) return;
-
     try {
+      final count = await TrackingDatabase.getUnsentCount();
+      if (count == 0) return;
+
+      print('BackgroundLocationService: Flushing $count queued positions...');
+
+      // Send only the most recent queued position (backend only needs latest)
+      final latest = await TrackingDatabase.getLatestUnsent();
+      if (latest == null) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString(_tokenKey);
+      if (token == null || token.isEmpty) return;
+
       final response = await http.post(
         Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
         headers: {
@@ -372,12 +390,12 @@ Future<void> _onStart(ServiceInstance service) async {
         body: jsonEncode({
           'lat': latest['lat'],
           'lng': latest['lng'],
-          'location_name': 'Reconnected - live location',
+          'location_name': latest['location_name'] ?? 'Reconnected - live location',
         }),
       ).timeout(const Duration(seconds: 20));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        pendingLocationQueue.clear();
+        await TrackingDatabase.markAllSent();
         consecutiveFailures = 0;
         print('BackgroundLocationService: Queue flushed successfully.');
       }
@@ -418,6 +436,9 @@ Future<void> _onStart(ServiceInstance service) async {
       );
     } catch (_) {}
 
+    // Always save to SQLite first (crash-proof)
+    await queuePosition(position, locationName: locationName);
+
     // POST to backend API
     try {
       final response = await http.post(
@@ -446,10 +467,10 @@ Future<void> _onStart(ServiceInstance service) async {
           return false;
         }
 
-        // Success! Reset backoff and flush queue
+        // Success! Reset backoff, mark queue as sent
         consecutiveFailures = 0;
         isOnline = true;
-        pendingLocationQueue.clear();
+        await TrackingDatabase.markAllSent();
         await dismissErrorAlert();
 
         updateNotification(
@@ -472,7 +493,6 @@ Future<void> _onStart(ServiceInstance service) async {
     } on TimeoutException {
       print('BackgroundLocationService: API call timed out, will retry.');
       consecutiveFailures++;
-      _queuePosition(position);
       updateNotification('Slow network - retrying...');
       // Only show alert after 3+ consecutive failures to avoid false alarms
       if (consecutiveFailures >= 3) {
@@ -485,7 +505,6 @@ Future<void> _onStart(ServiceInstance service) async {
     } catch (e) {
       print('BackgroundLocationService: Network error: $e');
       consecutiveFailures++;
-      _queuePosition(position);
       updateNotification('Network issue - retrying...');
       // Only show alert after 3+ consecutive failures to avoid false alarms
       if (consecutiveFailures >= 3) {
@@ -536,6 +555,7 @@ Future<void> _onStart(ServiceInstance service) async {
             positionSub?.cancel();
             watchdogTimer?.cancel();
             fallbackTimer?.cancel();
+            dbCleanupTimer?.cancel();
             service.stopSelf();
           }
         } catch (e, stack) {
@@ -614,6 +634,7 @@ Future<void> _onStart(ServiceInstance service) async {
           positionSub?.cancel();
           watchdogTimer?.cancel();
           fallbackTimer?.cancel();
+          dbCleanupTimer?.cancel();
           service.stopSelf();
         }
       }
@@ -684,6 +705,7 @@ Future<void> _onStart(ServiceInstance service) async {
         positionSub?.cancel();
         fallbackTimer?.cancel();
         connectivityCheckTimer?.cancel();
+        dbCleanupTimer?.cancel();
         timer.cancel();
         await alertNotifications.cancel(_alertNotificationId);
         service.stopSelf();
@@ -740,7 +762,7 @@ Future<void> _onStart(ServiceInstance service) async {
   // 5. CONNECTIVITY CHECK TIMER — detects when internet returns.
   //
   //    Checks every 30 seconds. When connectivity is restored after being
-  //    offline, immediately flushes the queued position and triggers a
+  //    offline, immediately flushes the SQLite queue and triggers a
   //    fresh location send. This ensures minimal delay when reconnecting.
   // ==========================================================================
   connectivityCheckTimer =
@@ -760,7 +782,7 @@ Future<void> _onStart(ServiceInstance service) async {
       await dismissErrorAlert();
       updateNotification('Reconnected - tracking active...');
 
-      // Flush queued positions
+      // Flush queued positions from SQLite
       await flushLocationQueue();
 
       // Trigger immediate fresh position
@@ -770,6 +792,22 @@ Future<void> _onStart(ServiceInstance service) async {
       // DNS lookup can fail even when API works fine on some networks
       print('BackgroundLocationService: Connectivity lost (confirmed by failures).');
       isOnline = false;
+    }
+  });
+
+  // ==========================================================================
+  // 6. PERIODIC SQLITE CLEANUP — delete old sent records every hour
+  // ==========================================================================
+  dbCleanupTimer = Timer.periodic(_dbCleanupInterval, (timer) async {
+    if (shouldStop) {
+      timer.cancel();
+      return;
+    }
+    try {
+      await TrackingDatabase.cleanup();
+      print('BackgroundLocationService: SQLite cleanup done.');
+    } catch (e) {
+      print('BackgroundLocationService: SQLite cleanup error: $e');
     }
   });
 }
@@ -795,6 +833,12 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
     }
     if (position == null) return true; // No position, retry next time
 
+    // Save to SQLite first
+    await TrackingDatabase.insert(
+      lat: position.latitude,
+      lng: position.longitude,
+    );
+
     final locationName = await _reverseGeocodeHttp(
       position.latitude,
       position.longitude,
@@ -818,6 +862,7 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final data = jsonDecode(response.body);
+      await TrackingDatabase.markAllSent();
       if (data['status'] == false) {
         await prefs.setBool(_serviceRunningKey, false);
         service.stopSelf();

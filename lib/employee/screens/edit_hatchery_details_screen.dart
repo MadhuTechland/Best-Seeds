@@ -68,7 +68,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     1: 'Pending',
     2: 'Confirmed',
     3: 'Driver Assigned',
-    4: 'In Progress',
+    4: 'In Transit',
     5: 'Delivered',
     6: 'Failed',
   };
@@ -269,7 +269,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
         _selectedBookingStatus != widget.booking.status.value) {
       if (_selectedBookingStatus == 5 && widget.booking.status.value != 4) {
         AppSnackbar.error(
-            'Booking must be In Progress to mark as Delivered');
+            'Booking must be In Transit to mark as Delivered');
         return;
       }
       if (_selectedBookingStatus == 6 && _selectedDeliveryReason == null) {
@@ -1252,7 +1252,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
 
                             /// ================= Driver Selection =================
                             if (!isAddNewDriver) ...[
-                              // Existing driver dropdown
+                              // Searchable driver selector
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -1265,66 +1265,87 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                     ),
                                   ),
                                   SizedBox(height: height * 0.01),
-                                  Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: width * 0.04,
-                                      vertical: height * 0.005,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey.shade100,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: isLoadingDrivers
-                                        ? Padding(
-                                            padding: EdgeInsets.symmetric(
-                                                vertical: height * 0.015),
-                                            child: const Center(
-                                              child: SizedBox(
-                                                height: 20,
-                                                width: 20,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                ),
+                                  isLoadingDrivers
+                                      ? Container(
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: height * 0.015),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey.shade100,
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              height: 20,
+                                              width: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
                                               ),
-                                            ),
-                                          )
-                                        : DropdownButtonHideUnderline(
-                                            child: DropdownButton<DriverItem>(
-                                              value: selectedDriver,
-                                              hint: Text(
-                                                'Select Driver',
-                                                style: TextStyle(
-                                                  fontSize: width * 0.04,
-                                                  color: Colors.grey.shade500,
-                                                ),
-                                              ),
-                                              isExpanded: true,
-                                              icon: Icon(
-                                                Icons.keyboard_arrow_down,
-                                                size: width * 0.06,
-                                                color: Colors.black,
-                                              ),
-                                              style: TextStyle(
-                                                fontSize: width * 0.04,
-                                                color: Colors.grey.shade700,
-                                              ),
-                                              items: drivers.map((driver) {
-                                                return DropdownMenuItem<
-                                                    DriverItem>(
-                                                  value: driver,
-                                                  child:
-                                                      Text(driver.displayName),
-                                                );
-                                              }).toList(),
-                                              onChanged: (value) {
-                                                setModalState(() {
-                                                  selectedDriver = value;
-                                                });
-                                              },
                                             ),
                                           ),
-                                  ),
+                                        )
+                                      : GestureDetector(
+                                          onTap: () {
+                                            _showDriverSearchDialog(
+                                              context,
+                                              drivers,
+                                              selectedDriver,
+                                              (driver) {
+                                                setModalState(() {
+                                                  selectedDriver = driver;
+                                                });
+                                              },
+                                            );
+                                          },
+                                          child: Container(
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: width * 0.04,
+                                              vertical: height * 0.016,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey.shade100,
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.search,
+                                                    size: 20,
+                                                    color: Colors.grey.shade500),
+                                                SizedBox(width: width * 0.03),
+                                                Expanded(
+                                                  child: Text(
+                                                    selectedDriver?.displayName ??
+                                                        'Search driver by name or number...',
+                                                    style: TextStyle(
+                                                      fontSize: width * 0.038,
+                                                      color: selectedDriver != null
+                                                          ? Colors.black87
+                                                          : Colors.grey.shade500,
+                                                    ),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                if (selectedDriver != null)
+                                                  GestureDetector(
+                                                    onTap: () {
+                                                      setModalState(() {
+                                                        selectedDriver = null;
+                                                      });
+                                                    },
+                                                    child: Icon(Icons.close,
+                                                        size: 18,
+                                                        color: Colors.grey.shade600),
+                                                  )
+                                                else
+                                                  Icon(
+                                                      Icons.keyboard_arrow_down,
+                                                      size: width * 0.06,
+                                                      color: Colors.black),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
                                 ],
                               ),
                             ] else ...[
@@ -1735,10 +1756,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                     Navigator.pop(
                                         context); // Close bottom sheet
                                   }
-                                  if (mounted) {
-                                    Navigator.pop(this.context,
-                                        true); // Pop screen with refresh flag
-                                  }
+                                  // Don't pop the edit screen — let user continue
+                                  // editing other fields (travel cost, description,
+                                  // delivery date, status) and save them all together.
                                 } catch (e) {
                                   AppSnackbar.error(extractErrorMessage(e));
                                 } finally {
@@ -2046,6 +2066,209 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showDriverSearchDialog(
+    BuildContext context,
+    List<DriverItem> allDrivers,
+    DriverItem? currentSelection,
+    void Function(DriverItem) onSelect,
+  ) {
+    final searchController = TextEditingController();
+    List<DriverItem> filtered = List.from(allDrivers);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Select Driver',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(dialogContext),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Search field
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: TextField(
+                      controller: searchController,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: 'Search by name or mobile...',
+                        hintStyle: TextStyle(color: Colors.grey.shade400),
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  searchController.clear();
+                                  setDialogState(() {
+                                    filtered = List.from(allDrivers);
+                                  });
+                                },
+                              )
+                            : null,
+                        filled: true,
+                        fillColor: Colors.grey.shade100,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onChanged: (query) {
+                        final q = query.toLowerCase().trim();
+                        setDialogState(() {
+                          if (q.isEmpty) {
+                            filtered = List.from(allDrivers);
+                          } else {
+                            filtered = allDrivers
+                                .where((d) =>
+                                    d.name.toLowerCase().contains(q) ||
+                                    d.mobile.contains(q))
+                                .toList();
+                          }
+                        });
+                      },
+                    ),
+                  ),
+
+                  // Results count
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${filtered.length} driver${filtered.length == 1 ? '' : 's'} found',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+
+                  // Driver list
+                  Flexible(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.4,
+                      ),
+                      child: filtered.isEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.person_search,
+                                      size: 48, color: Colors.grey.shade300),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'No drivers found',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey.shade500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  Divider(height: 1, color: Colors.grey.shade200),
+                              itemBuilder: (context, index) {
+                                final driver = filtered[index];
+                                final isSelected =
+                                    currentSelection?.id == driver.id;
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: isSelected
+                                        ? const Color(0xFF0077C8)
+                                        : Colors.grey.shade200,
+                                    child: Icon(
+                                      Icons.person,
+                                      size: 18,
+                                      color: isSelected
+                                          ? Colors.white
+                                          : Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    driver.name.isNotEmpty
+                                        ? driver.name
+                                        : 'Driver',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                      color: isSelected
+                                          ? const Color(0xFF0077C8)
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    driver.mobile,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  trailing: isSelected
+                                      ? const Icon(Icons.check_circle,
+                                          color: Color(0xFF0077C8), size: 20)
+                                      : null,
+                                  dense: true,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  onTap: () {
+                                    onSelect(driver);
+                                    Navigator.pop(dialogContext);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

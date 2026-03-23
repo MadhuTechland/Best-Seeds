@@ -93,6 +93,7 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
   DateTime _lastRefreshedAt = DateTime.now();
   bool _isRefreshing = false;
   Timer? _timeAgoTimer;
+  Timer? _autoRefreshTimer;
 
   // Pulse animation for vehicle icon
   late AnimationController _pulseController;
@@ -117,6 +118,12 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
     // Update "Updated X mins ago" text every 30 seconds
     _timeAgoTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
+    });
+    // Auto-refresh tracking data and ETA every 2 minutes
+    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (mounted && !_isRefreshing) {
+        _refreshData();
+      }
     });
   }
 
@@ -1900,6 +1907,7 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
   @override
   void dispose() {
     _timeAgoTimer?.cancel();
+    _autoRefreshTimer?.cancel();
     _pulseController.dispose();
     _smallMapController?.dispose();
     _expandedMapController?.dispose();
