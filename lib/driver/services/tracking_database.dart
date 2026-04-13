@@ -68,6 +68,22 @@ class TrackingDatabase {
     }
   }
 
+  /// Get ALL unsent locations ordered oldest-first (insertion order).
+  /// Used by the batch-flush path so the backend receives points in
+  /// chronological order and spike-detection works correctly.
+  static Future<List<Map<String, dynamic>>> getAllUnsent() async {
+    final db = await _open();
+    try {
+      return await db.query(
+        _table,
+        where: 'sent = 0',
+        orderBy: 'id ASC',
+      );
+    } finally {
+      await db.close();
+    }
+  }
+
   /// Get the most recent unsent location (for sending to server).
   static Future<Map<String, dynamic>?> getLatestUnsent() async {
     final db = await _open();

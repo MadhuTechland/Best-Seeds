@@ -6,6 +6,7 @@ import 'package:bestseeds/driver/repository/driver_auth_repository.dart';
 import 'package:bestseeds/driver/screens/driver_location_tracking.dart';
 import 'package:bestseeds/driver/screens/drop_location_bottomsheet.dart';
 import 'package:bestseeds/driver/screens/profile_screen.dart';
+import 'package:bestseeds/driver/screens/tracking_logs_screen.dart';
 import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/driver/services/tracking_alert_service.dart';
@@ -73,6 +74,7 @@ class _DriverDashboardState extends State<DriverDashboard>
     _fetchBookings();
     _checkActiveJourney();
     _requestNotificationPermission();
+    _requestBatteryExemptionEarly();
     TrackingAlertService.start();
   }
 
@@ -88,6 +90,31 @@ class _DriverDashboardState extends State<DriverDashboard>
               'Notification permission is required for GPS/internet alerts. Please enable it from app settings.');
         }
       }
+    }
+  }
+
+  /// Request battery optimization exemption the first time the driver
+  /// opens the app, BEFORE they start a journey.
+  ///
+  /// Previously this was only requested inside _ensureLocationPermissions,
+  /// which only runs when the driver taps "Start Journey". That meant a
+  /// driver could hit "resume journey" after app kill (via
+  /// _checkActiveJourney -> restartIfNeeded) and never be prompted at
+  /// all — the background service would run without the exemption and
+  /// the OEM would kill it again. Moving the prompt to initState
+  /// guarantees it's asked on first launch, not just on first journey.
+  ///
+  /// No-op if already granted. If denied, the journey-start flow will
+  /// request it again and the app still functions (just with reduced
+  /// background reliability on aggressive OEM ROMs).
+  Future<void> _requestBatteryExemptionEarly() async {
+    try {
+      final status = await Permission.ignoreBatteryOptimizations.status;
+      if (!status.isGranted) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } catch (_) {
+      // Non-fatal — the journey-start flow still re-requests this.
     }
   }
 
@@ -344,11 +371,25 @@ class _DriverDashboardState extends State<DriverDashboard>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Hello, $firstName',
-                  style: TextStyle(
-                    fontSize: width * 0.055,
-                    fontWeight: FontWeight.bold,
+                // Long-press the greeting to open the tracking-logs
+                // viewer. Hidden access so normal drivers don't see a
+                // "debug" button cluttering the header, but the dev
+                // running this build can tail the location pipeline.
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onLongPress: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const TrackingLogsScreen(),
+                      ),
+                    );
+                  },
+                  child: Text(
+                    'Hello, $firstName',
+                    style: TextStyle(
+                      fontSize: width * 0.055,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 if (_locationAddress != null && _locationAddress!.isNotEmpty)

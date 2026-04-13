@@ -55,6 +55,9 @@ class TrackingData {
   final String? inProgressAt;
   final List<RouteWaypoint> routeWaypoints;
   final LocationPoint? adminPickup;
+  // Server-computed intermediate stops — same list across all three apps
+  // so customer, employee and admin web always show identical location names.
+  final List<Map<String, dynamic>> autoTimelinePoints;
 
   TrackingData({
     required this.vehicleId,
@@ -72,6 +75,7 @@ class TrackingData {
     this.inProgressAt,
     this.routeWaypoints = const [],
     this.adminPickup,
+    this.autoTimelinePoints = const [],
   });
 
   /// Parse from new API format: { "booking": {...}, "timeline": [...], "route_waypoints": [...] }
@@ -126,6 +130,10 @@ class TrackingData {
               .toList() ??
           [],
       adminPickup: null,
+      autoTimelinePoints: (json['auto_timeline_points'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
     );
   }
 
@@ -160,6 +168,10 @@ class TrackingData {
         if (ap['lat'] == null || ap['lng'] == null) return null;
         return LocationPoint.fromJson(ap);
       }(),
+      autoTimelinePoints: (json['auto_timeline_points'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
     );
   }
 
@@ -175,26 +187,53 @@ class TrackingData {
   };
 }
 
+enum DriverStatus { moving, idle, signalLost, offline, stopped }
+
 class LocationPoint {
   final String name;
   final double lat;
   final double lng;
   final String? updatedAt;
+  final DriverStatus driverStatus;
   final bool isMoving;
+  final bool locationStale;
 
-  LocationPoint({required this.name, required this.lat, required this.lng, this.updatedAt, this.isMoving = true});
+  LocationPoint({
+    required this.name,
+    required this.lat,
+    required this.lng,
+    this.updatedAt,
+    this.driverStatus = DriverStatus.moving,
+    this.isMoving = true,
+    this.locationStale = false,
+  });
 
   factory LocationPoint.fromJson(Map<String, dynamic> json) {
+    final statusStr = json['driver_status'] as String? ?? '';
+    final DriverStatus status;
+    switch (statusStr) {
+      case 'idle':        status = DriverStatus.idle;       break;
+      case 'signal_lost': status = DriverStatus.signalLost; break;
+      case 'offline':     status = DriverStatus.offline;    break;
+      case 'stopped':     status = DriverStatus.stopped;    break;
+      default:            status = DriverStatus.moving;
+    }
     return LocationPoint(
-      name: json['name'] ?? '',
-      lat: (json['lat'] ?? 0).toDouble(),
-      lng: (json['lng'] ?? 0).toDouble(),
-      updatedAt: json['updated_at'],
-      isMoving: json['is_moving'] ?? true,
+      name:          json['name'] ?? '',
+      lat:           (json['lat'] ?? 0).toDouble(),
+      lng:           (json['lng'] ?? 0).toDouble(),
+      updatedAt:     json['updated_at'],
+      driverStatus:  status,
+      isMoving:      json['is_moving'] ?? true,
+      locationStale: json['location_stale'] ?? false,
     );
   }
 
-  Map<String, dynamic> toJson() => {"name": name, "lat": lat, "lng": lng, "updated_at": updatedAt, "is_moving": isMoving};
+  Map<String, dynamic> toJson() => {
+    "name": name, "lat": lat, "lng": lng, "updated_at": updatedAt,
+    "driver_status": driverStatus.name, "is_moving": isMoving,
+    "location_stale": locationStale,
+  };
 }
 
 class DriverDetails {

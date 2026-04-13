@@ -213,6 +213,83 @@ class GoogleMapsService {
     }
   }
 
+  /// HIGH-RESOLUTION directions. Decodes `steps[].polyline.points` instead of
+  /// `overview_polyline`. overview_polyline is Douglas–Peucker-simplified and
+  /// collapses tight curves/side-streets to straight chords — causing the green
+  /// line to appear to cut through buildings. Step polylines are full-resolution.
+  static Future<List<LatLng>> getDirectionsHighRes({
+    required LatLng origin,
+    required LatLng destination,
+    List<LatLng>? waypoints,
+  }) async {
+    final waypointsKey = (waypoints == null || waypoints.isEmpty)
+        ? '-'
+        : waypoints
+            .map((w) => '${_r4(w.latitude)},${_r4(w.longitude)}')
+            .join('|');
+    final cacheKey = 'dirHR:'
+        '${_r4(origin.latitude)},${_r4(origin.longitude)}>'
+        '${_r4(destination.latitude)},${_r4(destination.longitude)}|'
+        'wp=$waypointsKey';
+    final cached = await _cacheGet(cacheKey);
+    if (cached != null && cached['points'] is List) {
+      return _flatToLatLngs(cached['points'] as List);
+    }
+
+    try {
+      String waypointsStr = '';
+      if (waypoints != null && waypoints.isNotEmpty) {
+        waypointsStr =
+            '&waypoints=${waypoints.map((wp) => '${wp.latitude},${wp.longitude}').join('|')}';
+      }
+
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/directions/json'
+        '?origin=${origin.latitude},${origin.longitude}'
+        '&destination=${destination.latitude},${destination.longitude}'
+        '$waypointsStr'
+        '&key=$_apiKey',
+      );
+
+      final response = await http.get(url);
+      if (response.statusCode != 200) return [];
+      final data = json.decode(response.body);
+      if (data['status'] != 'OK') return [];
+
+      final routes = data['routes'] as List?;
+      if (routes == null || routes.isEmpty) return [];
+      final legs = routes[0]['legs'] as List?;
+      if (legs == null || legs.isEmpty) return [];
+
+      final List<LatLng> merged = [];
+      for (final leg in legs) {
+        final steps = leg['steps'] as List?;
+        if (steps == null) continue;
+        for (final step in steps) {
+          final encoded = step['polyline']?['points'] as String?;
+          if (encoded == null || encoded.isEmpty) continue;
+          final stepPts = _decodePolyline(encoded);
+          // Skip step-boundary duplicates
+          final start = (merged.isNotEmpty && stepPts.isNotEmpty &&
+                  stepPts.first.latitude == merged.last.latitude &&
+                  stepPts.first.longitude == merged.last.longitude)
+              ? 1
+              : 0;
+          for (int i = start; i < stepPts.length; i++) {
+            merged.add(stepPts[i]);
+          }
+        }
+      }
+
+      if (merged.isEmpty) return [];
+      await _cachePut(cacheKey, {'points': _latLngsToFlat(merged)});
+      return merged;
+    } catch (e) {
+      debugPrint('Error getting high-res directions: $e');
+      return [];
+    }
+  }
+
   /// Get directions with duration info (returns polyline points + duration text)
   static Future<Map<String, dynamic>> getDirectionsWithDuration({
     required LatLng origin,

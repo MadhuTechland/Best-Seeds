@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
@@ -10,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'tracking_database.dart';
+import 'tracking_logger.dart';
 import 'tracking_work_manager.dart';
 
 // --- Constants (duplicated here because this file must be self-contained
@@ -39,8 +41,13 @@ const String _alertChannelName = 'Tracking Alerts';
 const int _alertNotificationId = 889;
 
 // Watchdog constants
-const Duration _watchdogInterval = Duration(minutes: 3);
-const Duration _streamTimeout = Duration(minutes: 5);
+// Shortened from 3 min → 1 min and 5 min → 3 min so silent stream
+// deaths are caught within a single minute instead of three. The Timer
+// based watchdog only matters while the CPU is awake; when Doze kicks
+// in, the WorkManager active-capture chain (fires every 5 min) takes
+// over as the secondary update source — see tracking_work_manager.dart.
+const Duration _watchdogInterval = Duration(minutes: 1);
+const Duration _streamTimeout = Duration(minutes: 3);
 const Duration _fallbackPollInterval = Duration(minutes: 2);
 const Duration _connectivityCheckInterval = Duration(seconds: 30);
 const Duration _maxStalePositionAge = Duration(minutes: 10);
@@ -112,6 +119,7 @@ class BackgroundLocationService {
 
   /// Start the background location service + WorkManager guardian.
   static Future<void> start() async {
+    TrackingLogger.log('▶ service.start() requested');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, true);
 
@@ -120,13 +128,20 @@ class BackgroundLocationService {
       await _service.startService();
     }
 
-    // Register WorkManager guardian — OS-guaranteed periodic task
-    // that will restart the foreground service if OEM kills it.
+    // Register WorkManager guardian — OS-guaranteed 15-min periodic
+    // task that will restart the foreground service if OEM kills it.
     await registerGuardianTask();
+    // Register the 5-min active-capture chain. Each one-off task
+    // fires getCurrentPosition() from its own isolate and re-arms
+    // the next task, so we get sub-15-min forced updates even when
+    // Doze has suspended the main foreground service.
+    await registerActiveCaptureTask();
   }
 
   /// Stop the background location service + cancel WorkManager guardian.
   static Future<void> stop() async {
+    TrackingLogger.log('■ service.stop() requested');
+    await TrackingLogger.flush();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, false);
 
@@ -135,8 +150,9 @@ class BackgroundLocationService {
       _service.invoke('stop');
     }
 
-    // Cancel the guardian since journey is over
+    // Cancel both WorkManager chains since the journey is over.
     await cancelGuardianTask();
+    await cancelActiveCaptureTask();
 
     // Clear the SQLite queue
     await TrackingDatabase.clearAll();
@@ -171,8 +187,12 @@ class BackgroundLocationService {
         await _service.startService();
       }
 
-      // Re-register WorkManager guardian in case it was lost
+      // Re-register BOTH WorkManager tasks.
+      // Previously only guardian was re-registered here — activeCaptureTask
+      // was missing, so every OEM kill → guardian restart left the 2-min
+      // backup chain dead for the rest of the journey.
       await registerGuardianTask();
+      await registerActiveCaptureTask();
     }
   }
 }
@@ -188,16 +208,66 @@ Future<void> _onStart(ServiceInstance service) async {
   // Required for plugins to work in background isolate
   DartPluginRegistrant.ensureInitialized();
 
+  // Re-register WorkManager tasks immediately on every service start.
+  //
+  // Why: three paths can start this isolate without going through the
+  // public BackgroundLocationService.start() method which normally
+  // registers tasks:
+  //   (a) autoStartOnBoot: true — BootReceiver fires after phone reboot,
+  //       WorkManager DB may have been wiped by aggressive OEM optimizer.
+  //   (b) restartIfNeeded() previously only re-registered the guardian,
+  //       not the active-capture chain (now fixed, but defence-in-depth).
+  //   (c) Second-attempt restart in WorkManager guardian task itself.
+  //
+  // registerActiveCaptureTask / registerGuardianTask use
+  // ExistingWorkPolicy.replace so calling them when tasks already exist
+  // is safe — it just resets their delay counters.
+  try {
+    final startPrefs = await SharedPreferences.getInstance();
+    await startPrefs.reload();
+    if (startPrefs.getBool(_serviceRunningKey) ?? false) {
+      await registerGuardianTask();
+      await registerActiveCaptureTask();
+      print('BackgroundLocationService: WorkManager tasks re-registered on _onStart');
+    }
+  } catch (e) {
+    print('BackgroundLocationService: WorkManager re-register failed: $e');
+  }
+
   bool shouldStop = false;
   StreamSubscription<Position>? positionSub;
+  StreamSubscription<List<ConnectivityResult>>? connectivitySub;
   Timer? watchdogTimer;
   Timer? fallbackTimer;
   Timer? connectivityCheckTimer;
   Timer? dbCleanupTimer;
 
-  // Track when the last position was received from the stream
+  // Track when the last FRESH position was received from the stream.
+  // Only updated when the position moves > 2m — frozen/identical positions
+  // do NOT reset this, so the watchdog can detect a stale stream.
   DateTime lastStreamPositionTime = DateTime.now();
   int streamRestartCount = 0;
+
+  // Watchdog tick counter — used to re-register WorkManager active-capture
+  // chain every 30 minutes. The chain is self-maintaining (each run
+  // re-registers the next), but on aggressive OEMs it can be coalesced or
+  // dropped silently during multi-day journeys. Re-registering from the
+  // watchdog ensures the 2-min backup is never dead for more than 30 min.
+  int watchdogTicks = 0;
+
+  // Frozen-stream detection.
+  // OEM phones (Xiaomi, Realme, Vivo) sometimes keep the Geolocator stream
+  // "alive" but return the same cached lat/lng on every tick.  The watchdog
+  // sees lastStreamPositionTime updating and thinks the stream is healthy —
+  // worst kind of bug because tracking appears OK but the driver never moves.
+  //
+  // Fix: only update lastStreamPositionTime on genuinely fresh coordinates
+  // (> 2 m from the previous reading).  Count identical readings; after
+  // 9 consecutive same positions (~90 s at 10 s intervals) force a restart.
+  Position? lastRawStreamPosition;
+  int consecutiveSameStreamPositions = 0;
+  const int frozenStreamRestartThreshold = 9;        // ~90 s at 10 s intervals
+  const double frozenPositionThresholdMeters = 2.0;  // metres — real GPS noise < this
 
   // Track alert state — use timestamp cooldown so alerts repeat every 3 minutes
   DateTime? lastAlertTime;
@@ -205,6 +275,13 @@ Future<void> _onStart(ServiceInstance service) async {
   // Connectivity & retry state
   bool isOnline = true;
   int consecutiveFailures = 0;
+  // Set by sendPosition() when consecutive failures indicate the
+  // Geolocator stream may have silently died. The watchdog (which runs
+  // every 1 minute) picks this up and calls startPositionStream() —
+  // we can't restart the stream from inside sendPosition() directly
+  // because startPositionStream is declared later in the same lexical
+  // scope of _onStart and Dart forbids forward local references.
+  bool streamRestartRequested = false;
   Position? lastSentPosition;
   DateTime? lastSentAt;
   Position? lastReverseGeocodedPosition;
@@ -254,6 +331,7 @@ Future<void> _onStart(ServiceInstance service) async {
     print('BackgroundLocationService: Received stop command.');
     shouldStop = true;
     positionSub?.cancel();
+    connectivitySub?.cancel();
     watchdogTimer?.cancel();
     fallbackTimer?.cancel();
     connectivityCheckTimer?.cancel();
@@ -288,7 +366,7 @@ Future<void> _onStart(ServiceInstance service) async {
           'Authorization': 'Bearer $token',
         },
         body: jsonEncode({'issue_type': issueType}),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 8));
 
       print('BackgroundLocationService: Tracking alert sent -> $issueType');
     } catch (e) {
@@ -376,42 +454,63 @@ Future<void> _onStart(ServiceInstance service) async {
   }
 
   // ---------- Helper: Flush queued positions from SQLite ----------
+  //
+  // Sends ALL unsent points (up to 200 — the SQLite queue cap) as a
+  // single batch request to /api/driver/location/batch-update.
+  //
+  // Why batch instead of one-by-one:
+  //  • One HTTP request vs up to 200 — reconnect is fast.
+  //  • Each point carries its original GPS timestamp (the 'timestamp'
+  //    column stored at capture time). The batch endpoint uses these
+  //    for reached_at and spike-detection, so the backend timeline
+  //    stays in the correct chronological order even after a 30-min
+  //    offline gap.
+  //  • No race condition: markAllSent() is called only after the
+  //    entire batch succeeds, so if the request fails the points
+  //    stay queued for the next connectivity-restored event.
   Future<void> flushLocationQueue() async {
     try {
-      final count = await TrackingDatabase.getUnsentCount();
-      if (count == 0) return;
-
-      print('BackgroundLocationService: Flushing $count queued positions...');
-
-      // Send only the most recent queued position (backend only needs latest)
-      final latest = await TrackingDatabase.getLatestUnsent();
-      if (latest == null) return;
+      final unsent = await TrackingDatabase.getAllUnsent();
+      if (unsent.isEmpty) return;
 
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString(_tokenKey);
       if (token == null || token.isEmpty) return;
 
+      print('BackgroundLocationService: Flushing ${unsent.length} queued points via batch...');
+      TrackingLogger.log('↑ flush  ${unsent.length} queued points → batch endpoint');
+
+      final points = unsent.map((row) => {
+        'lat': row['lat'],
+        'lng': row['lng'],
+        'location_name': row['location_name'] ?? 'Offline location',
+        // 'timestamp' is the ISO-8601 string stored at GPS capture time.
+        // The batch endpoint uses it as reached_at.
+        'gps_timestamp': row['timestamp'],
+      }).toList();
+
       final response = await http.post(
-        Uri.parse('$_baseUrl$_locationUpdateEndpoint'),
+        Uri.parse('${_baseUrl}driver/location/batch-update'),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'lat': latest['lat'],
-          'lng': latest['lng'],
-          'location_name': latest['location_name'] ?? 'Reconnected - live location',
-        }),
-      ).timeout(const Duration(seconds: 20));
+        body: jsonEncode({'points': points}),
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         await TrackingDatabase.markAllSent();
         consecutiveFailures = 0;
-        print('BackgroundLocationService: Queue flushed successfully.');
+        TrackingLogger.log('✓ flush  ${unsent.length} points accepted by server');
+        print('BackgroundLocationService: Batch flush successful (${unsent.length} points).');
+      } else {
+        TrackingLogger.log('✗ flush  http=${response.statusCode}');
+        print('BackgroundLocationService: Batch flush failed: ${response.statusCode}');
       }
     } catch (e) {
-      print('BackgroundLocationService: Queue flush failed: $e');
+      TrackingLogger.log('✗ flush  error: $e');
+      print('BackgroundLocationService: Batch flush error: $e');
     }
   }
 
@@ -467,6 +566,15 @@ Future<void> _onStart(ServiceInstance service) async {
       return true;
     }
 
+    // ── Safety valve: long-journey / hotspot gap ──
+    // If more than 60s have passed since the last successful send (e.g. the
+    // driver was offline while switching to hotspot and no send got through),
+    // force the next position through unconditionally. Prevents indefinite
+    // silence when the movement/heartbeat gates both missed due to a gap.
+    if (sinceLastSend >= const Duration(seconds: 60)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -489,17 +597,22 @@ Future<void> _onStart(ServiceInstance service) async {
     }
 
     try {
-      final resolved = await _reverseGeocodeHttp(
+      final resolved = await reverseGeocodeHttp(
         position.latitude,
         position.longitude,
       );
       if (resolved != null && resolved.isNotEmpty) {
         lastResolvedLocationName = resolved;
+        // Only advance the cache anchor when geocoding actually succeeded.
+        // If we always advance on failure, the next call sees "moved < 400m
+        // from failed-geocode position AND fresh < 5min" → returns the OLD
+        // city name instead of retrying. Driver stays stuck showing wrong
+        // city until they move 400m from where the failed geocode was tried.
+        lastReverseGeocodedPosition = position;
+        lastReverseGeocodedAt = now;
       }
     } catch (_) {}
 
-    lastReverseGeocodedPosition = position;
-    lastReverseGeocodedAt = now;
     return lastResolvedLocationName;
   }
 
@@ -524,9 +637,25 @@ Future<void> _onStart(ServiceInstance service) async {
     }
 
     if (!shouldSendPosition(position)) {
+      // Position didn't meet the send-throttle gate (too close to the
+      // last sent point, or too soon). Log anyway so we can see the
+      // stream is alive even when individual fixes are being filtered.
+      TrackingLogger.log(
+          'filter  lat=${position.latitude.toStringAsFixed(6)} '
+          'lng=${position.longitude.toStringAsFixed(6)} '
+          'acc=${position.accuracy.toStringAsFixed(0)}m (throttled)');
       return true;
     }
 
+    final sendStart = DateTime.now();
+    final sinceLastSent = lastSentAt == null
+        ? 'first'
+        : '${sendStart.difference(lastSentAt!).inSeconds}s';
+    TrackingLogger.log(
+        '→ send   lat=${position.latitude.toStringAsFixed(6)} '
+        'lng=${position.longitude.toStringAsFixed(6)} '
+        'acc=${position.accuracy.toStringAsFixed(0)}m '
+        'since=$sinceLastSent');
     print('BackgroundLocationService: Position -> '
         'lat=${position.latitude}, lng=${position.longitude}');
 
@@ -551,13 +680,16 @@ Future<void> _onStart(ServiceInstance service) async {
           'location_name': locationName ?? 'Live vehicle location',
           'accuracy': position.accuracy,
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 12));
 
       print('BackgroundLocationService: API Response ${response.statusCode}');
+
+      final elapsedMs = DateTime.now().difference(sendStart).inMilliseconds;
 
       // 401 = token revoked (driver logged in on another device)
       // Stop sending GPS immediately — this device is no longer authorized.
       if (response.statusCode == 401) {
+        TrackingLogger.log('✗ 401    token revoked, stopping service');
         print('BackgroundLocationService: 401 Unauthorized — '
             'token revoked (logged in on another device). Stopping.');
         await prefs.setBool(_serviceRunningKey, false);
@@ -569,6 +701,7 @@ Future<void> _onStart(ServiceInstance service) async {
         final data = jsonDecode(response.body);
 
         if (data['status'] == false) {
+          TrackingLogger.log('✗ stop   journey ended by backend');
           print(
               'BackgroundLocationService: Journey ended, stopping service.');
           await prefs.setBool(_serviceRunningKey, false);
@@ -580,9 +713,23 @@ Future<void> _onStart(ServiceInstance service) async {
         isOnline = true;
         await TrackingDatabase.markAllSent();
         await dismissErrorAlert();
+        TrackingLogger.log(
+            '✓ sent   lat=${position.latitude.toStringAsFixed(6)} '
+            'lng=${position.longitude.toStringAsFixed(6)} '
+            'http=${response.statusCode} in ${elapsedMs}ms');
 
-        updateNotification(
-            'Location: ${locationName ?? 'Tracking active...'}');
+        // Only show a place name if the GPS fix is fresh (< 30s old).
+        // FLP cached positions after service restart often have good claimed
+        // accuracy (< 100m) but carry a timestamp from the last fix before
+        // the service died — that old position may be in a different city.
+        // Showing "Tracking active..." until a fresh fix arrives avoids
+        // briefly displaying a wrong place name (e.g. Polekurru when the
+        // driver is already at Yanam bridge).
+        final fixAge = DateTime.now().difference(position.timestamp);
+        final notifContent = fixAge.inSeconds <= 30 && locationName != null
+            ? 'Location: $locationName'
+            : 'Tracking active...';
+        updateNotification(notifContent);
         lastSentPosition = position;
         lastSentAt = DateTime.now();
 
@@ -595,12 +742,17 @@ Future<void> _onStart(ServiceInstance service) async {
 
         print('BackgroundLocationService: Location sent successfully.');
       } else {
+        TrackingLogger.log(
+            '✗ http=${response.statusCode} fails=$consecutiveFailures '
+            'in ${elapsedMs}ms');
         print(
             'BackgroundLocationService: API error ${response.statusCode}');
         consecutiveFailures++;
         updateNotification('Server error, retrying...');
       }
     } on TimeoutException {
+      TrackingLogger.log(
+          '✗ timeout fails=${consecutiveFailures + 1} (12s http timeout)');
       print('BackgroundLocationService: API call timed out, will retry.');
       consecutiveFailures++;
       updateNotification('Slow network - retrying...');
@@ -611,8 +763,14 @@ Future<void> _onStart(ServiceInstance service) async {
           title: 'Internet Issue!',
           body: 'Please check your internet connection. Location updates are failing.',
         );
+        // Flag for the watchdog (runs every 1 min) to restart the
+        // position stream. Can't call startPositionStream directly from
+        // here because it's declared later in _onStart's lexical scope.
+        streamRestartRequested = true;
       }
     } catch (e) {
+      TrackingLogger.log(
+          '✗ neterr fails=${consecutiveFailures + 1} $e');
       print('BackgroundLocationService: Network error: $e');
       consecutiveFailures++;
       updateNotification('Network issue - retrying...');
@@ -623,6 +781,8 @@ Future<void> _onStart(ServiceInstance service) async {
           title: 'Internet Issue!',
           body: 'Please check your internet connection. Location updates are failing.',
         );
+        // Same stream-restart flag as the timeout path — see above.
+        streamRestartRequested = true;
       }
     }
 
@@ -641,22 +801,86 @@ Future<void> _onStart(ServiceInstance service) async {
     if (shouldStop) return;
 
     streamRestartCount++;
+    TrackingLogger.log('◉ stream start (attempt #$streamRestartCount)');
     print('BackgroundLocationService: Starting position stream '
         '(attempt #$streamRestartCount)');
+
+    // Reset frozen-stream counters on every (re)start so a fresh stream
+    // doesn't inherit stale counts from the previous subscription.
+    lastRawStreamPosition = null;
+    consecutiveSameStreamPositions = 0;
 
     positionSub = Geolocator.getPositionStream(
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.best,
         intervalDuration: _movingUpdateInterval,
         distanceFilter: 0,
-        // Force GPS-only via platform LocationManager — avoids cell tower /
-        // WiFi triangulation that causes location jumps (e.g. Borabanda ghost).
-        forceLocationManager: true,
+        // Do NOT use forceLocationManager here.
+        //
+        // forceLocationManager: true bypasses Google's FusedLocationProvider
+        // (FLP) and forces Android's raw LocationManager. The difference matters
+        // critically when the screen is locked:
+        //
+        //   • FLP runs inside Google Play Services, which holds a privileged
+        //     PARTIAL_WAKE_LOCK and has Doze exemptions. A foreground service
+        //     using FLP continues to receive location callbacks during Doze.
+        //
+        //   • Android LocationManager has NO such exemptions. When Doze deep
+        //     mode kicks in (~30-40 min after screen lock + phone idle), the OS
+        //     defers LocationManager requests entirely — the stream goes silent
+        //     exactly matching the symptom the driver reported.
+        //
+        // Ghost-location protection (cell tower / WiFi jumps) is still provided
+        // by the accuracy > 100m guard in shouldSendPosition(). FLP with
+        // LocationAccuracy.best prefers GPS when available; non-GPS positions
+        // (accuracy > 100m) are rejected before being sent to the backend.
       ),
     ).listen(
       (position) async {
         if (shouldStop) return;
-        lastStreamPositionTime = DateTime.now();
+
+        // ── Frozen-stream detection ──
+        // Only mark the stream "alive" when the position is genuinely fresh
+        // (moved > 2 m from the previous reading). OEM phones (Xiaomi, Realme,
+        // Vivo) can keep the stream running but replay the same cached lat/lng
+        // on every tick. If lastStreamPositionTime updated on every tick, the
+        // watchdog would never fire — the stream looks healthy but is useless.
+        final distFromLast = lastRawStreamPosition == null
+            ? double.infinity
+            : Geolocator.distanceBetween(
+                lastRawStreamPosition!.latitude,
+                lastRawStreamPosition!.longitude,
+                position.latitude,
+                position.longitude,
+              );
+
+        if (distFromLast > frozenPositionThresholdMeters) {
+          // Fresh position — update watchdog timer and reset frozen counter
+          lastStreamPositionTime = DateTime.now();
+          consecutiveSameStreamPositions = 0;
+        } else {
+          // Same position as last tick
+          consecutiveSameStreamPositions++;
+          TrackingLogger.log(
+              '⚠ same pos streak=$consecutiveSameStreamPositions '
+              '(dist=${distFromLast.toStringAsFixed(1)}m)');
+
+          if (consecutiveSameStreamPositions >= frozenStreamRestartThreshold) {
+            // Stream is frozen — flag for watchdog to restart it.
+            // Don't restart here directly (can't call startPositionStream
+            // from inside its own listener without a forward-reference hack).
+            TrackingLogger.log(
+                '🔴 frozen stream detected after '
+                '$consecutiveSameStreamPositions identical positions — '
+                'requesting restart');
+            print('BackgroundLocationService: FROZEN STREAM — '
+                '$consecutiveSameStreamPositions identical positions, '
+                'requesting stream restart');
+            streamRestartRequested = true;
+            consecutiveSameStreamPositions = 0;
+          }
+        }
+        lastRawStreamPosition = position;
 
         try {
           final keepRunning = await sendPosition(position);
@@ -702,6 +926,9 @@ Future<void> _onStart(ServiceInstance service) async {
       return;
     }
 
+    TrackingLogger.log(
+        '◉ fallback poll firing — stream silent for '
+        '${timeSinceLastStream.inSeconds}s');
     print('BackgroundLocationService: Fallback poll firing — stream silent for '
         '${timeSinceLastStream.inMinutes}m ${timeSinceLastStream.inSeconds % 60}s');
 
@@ -720,6 +947,9 @@ Future<void> _onStart(ServiceInstance service) async {
 
       Position? pos;
       try {
+        // Use FLP (not forceAndroidLocationManager) so this call survives
+        // Doze mode. Ghost locations are caught by the accuracy > 100m guard
+        // in shouldSendPosition() — no need to force the raw LocationManager.
         pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.best,
           timeLimit: const Duration(seconds: 15),
@@ -727,8 +957,8 @@ Future<void> _onStart(ServiceInstance service) async {
       } catch (_) {
         pos = await Geolocator.getLastKnownPosition();
         // Reject stale positions older than 10 minutes
-        if (pos != null && pos.timestamp != null) {
-          final age = DateTime.now().difference(pos.timestamp!);
+        if (pos != null) {
+          final age = DateTime.now().difference(pos.timestamp);
           if (age > _maxStalePositionAge) {
             print('BackgroundLocationService: Stale position '
                 '(${age.inMinutes}m old), discarding.');
@@ -765,8 +995,8 @@ Future<void> _onStart(ServiceInstance service) async {
       );
     } catch (_) {
       firstPos = await Geolocator.getLastKnownPosition();
-      if (firstPos != null && firstPos.timestamp != null) {
-        final age = DateTime.now().difference(firstPos.timestamp!);
+      if (firstPos != null) {
+        final age = DateTime.now().difference(firstPos.timestamp);
         if (age > _maxStalePositionAge) {
           print('BackgroundLocationService: Initial position stale '
               '(${age.inMinutes}m old), discarding.');
@@ -813,6 +1043,7 @@ Future<void> _onStart(ServiceInstance service) async {
         print('BackgroundLocationService: Watchdog detected service flag off.');
         shouldStop = true;
         positionSub?.cancel();
+        connectivitySub?.cancel();
         fallbackTimer?.cancel();
         connectivityCheckTimer?.cancel();
         dbCleanupTimer?.cancel();
@@ -838,7 +1069,24 @@ Future<void> _onStart(ServiceInstance service) async {
     final timeSinceLastPosition =
         DateTime.now().difference(lastStreamPositionTime);
 
-    if (timeSinceLastPosition > _streamTimeout) {
+    // Honour an explicit restart request from sendPosition() even if
+    // the stream looks alive. Sustained API POST failures often mean
+    // the stream is still ticking but positions are stale fallback
+    // values (getLastKnownPosition), so a fresh subscription helps.
+    if (streamRestartRequested) {
+      TrackingLogger.log(
+          '⟲ watchdog restart requested by sendPosition '
+          '(fails=$consecutiveFailures)');
+      print('BackgroundLocationService: WATCHDOG — stream restart requested by '
+          'sendPosition (consecutiveFailures=$consecutiveFailures)');
+      streamRestartRequested = false;
+      updateNotification('Reconnecting GPS...');
+      await startPositionStream();
+      lastStreamPositionTime = DateTime.now();
+    } else if (timeSinceLastPosition > _streamTimeout) {
+      TrackingLogger.log(
+          '⟲ watchdog stream silent for ${timeSinceLastPosition.inSeconds}s '
+          '— restarting');
       print('BackgroundLocationService: WATCHDOG — No position received for '
           '${timeSinceLastPosition.inMinutes} minutes. Restarting stream...');
       updateNotification('Reconnecting GPS...');
@@ -849,6 +1097,26 @@ Future<void> _onStart(ServiceInstance service) async {
     } else {
       print('BackgroundLocationService: Watchdog OK — last position '
           '${timeSinceLastPosition.inSeconds}s ago.');
+    }
+
+    // ── WorkManager chain health check (every 30 min) ──
+    // The active-capture chain is self-maintaining, but on aggressive OEMs
+    // (Xiaomi MIUI, Realme, Vivo) it can be coalesced or silently dropped
+    // during multi-day journeys without any error. Re-registering every
+    // 30 min ensures the 2-min Doze-bypass backup never stays dead longer
+    // than one watchdog window — critical for 5–10 day journeys.
+    watchdogTicks++;
+    if (watchdogTicks % 30 == 0) {
+      try {
+        await registerActiveCaptureTask();
+        TrackingLogger.log('🔁 watchdog re-registered active-capture chain '
+            '(tick=$watchdogTicks)');
+        print('BackgroundLocationService: WATCHDOG — active-capture chain '
+            're-registered at tick $watchdogTicks');
+      } catch (e) {
+        print('BackgroundLocationService: WATCHDOG — active-capture '
+            're-register failed: $e');
+      }
     }
   });
 
@@ -906,7 +1174,57 @@ Future<void> _onStart(ServiceInstance service) async {
   });
 
   // ==========================================================================
-  // 6. PERIODIC SQLITE CLEANUP — delete old sent records every hour
+  // 6. CONNECTIVITY STREAM — instant reaction to network changes.
+  //
+  //    The periodic timer (every 30s) is too slow when the driver switches
+  //    from mobile data to hotspot (or vice-versa). connectivity_plus fires
+  //    immediately when any network interface changes, so we react within
+  //    ~1 second instead of up to 90 seconds (30s timer × 3 failures).
+  //
+  //    On every change to a connected state:
+  //      • reset failure counter so the next send isn't throttled
+  //      • flush SQLite queue (points captured while offline)
+  //      • restart the Geolocator stream — OEM phones (Xiaomi, Realme) can
+  //        reset the GPS socket when the network interface changes, causing
+  //        the stream to silently stop delivering positions
+  //      • fire an immediate fallback poll to send a fresh position NOW
+  // ==========================================================================
+  connectivitySub = Connectivity().onConnectivityChanged.listen(
+    (List<ConnectivityResult> results) async {
+      if (shouldStop) return;
+
+      final hasNetwork = results.any((r) =>
+          r == ConnectivityResult.mobile ||
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.ethernet);
+
+      TrackingLogger.log(
+          '📶 connectivity changed → ${results.map((r) => r.name).join(",")}');
+      print('BackgroundLocationService: Network changed → $results');
+
+      if (hasNetwork) {
+        // Network became available (hotspot connected, data restored, etc.)
+        isOnline = true;
+        consecutiveFailures = 0;
+        streamRestartRequested = false;
+        await dismissErrorAlert();
+        updateNotification('Network connected — syncing location...');
+
+        // Flush any points queued while we were offline
+        await flushLocationQueue();
+
+        // Restart GPS stream — network change can silently kill it on OEMs.
+        // The stream itself will emit a fresh position within ~10s.
+        // (fallbackPoll is NOT called here — it always skips immediately after
+        // a stream restart because lastStreamPositionTime is reset to now.)
+        await startPositionStream();
+        lastStreamPositionTime = DateTime.now();
+      }
+    },
+  );
+
+  // ==========================================================================
+  // 7. PERIODIC SQLITE CLEANUP — delete old sent records every hour
   // ==========================================================================
   dbCleanupTimer = Timer.periodic(_dbCleanupInterval, (timer) async {
     if (shouldStop) {
@@ -949,7 +1267,7 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
       lng: position.longitude,
     );
 
-    final locationName = await _reverseGeocodeHttp(
+    final locationName = await reverseGeocodeHttp(
       position.latitude,
       position.longitude,
     );
@@ -987,17 +1305,34 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
 }
 
 /// HTTP-based reverse geocoding that works in background isolate.
-Future<String?> _reverseGeocodeHttp(double lat, double lng) async {
+/// Public so the WorkManager isolate can call it directly.
+///
+/// WHY NO result_type FILTER:
+/// Using result_type=sublocality|locality forces Google to return only results
+/// matching those administrative types. In rural/bridge areas this causes
+/// Google to pick the nearest administrative "sublocality" owner — which can
+/// be a village several km away from the actual GPS point (e.g. returning
+/// "Komaragiri" when the driver is at Annampalli/Muramalla Bridge).
+///
+/// Without result_type, Google returns all result types ordered by precision
+/// (street-level first). We then scan ALL results' address_components and
+/// collect the first locality, sublocality, and state values found.
+/// Scanning all results (not just results[0]) means a street-address result
+/// that has no locality component still contributes — the locality we want
+/// usually appears in components of one of the first 2-3 results.
+///
+/// Priority: locality (town/city) > sublocality (village/ward) > state only.
+Future<String?> reverseGeocodeHttp(double lat, double lng) async {
   try {
     final url = Uri.parse(
       'https://maps.googleapis.com/maps/api/geocode/json'
       '?latlng=$lat,$lng'
-      '&result_type=sublocality|locality|administrative_area_level_1'
       '&language=en'
       '&key=$_googleApiKey',
     );
 
-    final response = await http.get(url).timeout(const Duration(seconds: 10));
+    // 3s timeout — geocode must not eat into the 12s location POST timeout.
+    final response = await http.get(url).timeout(const Duration(seconds: 3));
     if (response.statusCode != 200) return null;
 
     final data = jsonDecode(response.body);
@@ -1006,25 +1341,35 @@ Future<String?> _reverseGeocodeHttp(double lat, double lng) async {
     final results = data['results'] as List;
     if (results.isEmpty) return null;
 
-    String? subLocality;
     String? locality;
+    String? subLocality;
     String? adminArea;
 
-    for (var component in results[0]['address_components']) {
-      final types = (component['types'] as List).cast<String>();
-      if (types.contains('sublocality') ||
-          types.contains('sublocality_level_1')) {
-        subLocality = component['long_name'];
+    // Scan all results (up to 5) to collect the best available components.
+    // locality is preferred — stop scanning once we have one.
+    for (var result in results.take(5)) {
+      for (var component in result['address_components']) {
+        final types = (component['types'] as List).cast<String>();
+        if (types.contains('locality')) {
+          locality ??= component['long_name'];
+        }
+        if (types.contains('sublocality') ||
+            types.contains('sublocality_level_1')) {
+          subLocality ??= component['long_name'];
+        }
+        if (types.contains('administrative_area_level_1')) {
+          adminArea ??= component['long_name'];
+        }
       }
-      if (types.contains('locality')) {
-        locality = component['long_name'];
-      }
-      if (types.contains('administrative_area_level_1')) {
-        adminArea = component['long_name'];
-      }
+      if (locality != null) break; // locality found — precise enough
     }
 
-    return [subLocality, locality, adminArea]
+    // Build: "Annampalli, Andhra Pradesh" or "Pasuvullanka, Andhra Pradesh"
+    // Prefer locality > sublocality so we show the town, not the ward.
+    final place = locality ?? subLocality;
+    if (place == null && adminArea == null) return null;
+
+    return [place, adminArea]
         .where((e) => e != null && e.isNotEmpty)
         .join(', ');
   } catch (e) {
