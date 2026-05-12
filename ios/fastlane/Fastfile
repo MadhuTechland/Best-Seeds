@@ -8,7 +8,7 @@ platform :ios do
       app_identifier: "com.driver.bestseed",
       app_name: "Drive Bestseed",
       language: "English",
-      app_version: "1.0.2",
+      app_version: "1.0.3",
       sku: "com.driver.bestseed",
       enable_services: {
         push_notification: "on"

@@ -89,15 +89,10 @@ class _DriverDashboardState extends State<DriverDashboard>
   /// On Android 13+ (API 33+), POST_NOTIFICATIONS requires a runtime request.
   Future<void> _requestNotificationPermission() async {
     final status = await Permission.notification.status;
-    if (!status.isGranted) {
-      final result = await Permission.notification.request();
-      if (result.isPermanentlyDenied) {
-        if (mounted) {
-          AppSnackbar.error(
-              'Notification permission is required for GPS/internet alerts. Please enable it from app settings.');
-        }
-      }
-    }
+    // If already permanently denied, skip — user already saw the denial.
+    // Showing an error on every initState would be annoying.
+    if (status.isPermanentlyDenied || status.isGranted) return;
+    await Permission.notification.request();
   }
 
   Future<bool> _ensureBatteryOptimizationExemption() async {
@@ -1280,7 +1275,12 @@ class _DriverDashboardState extends State<DriverDashboard>
   /// Ensures both foreground + background location and notification permissions
   /// are granted. Returns true if all required permissions are good.
   Future<bool> _ensureLocationPermissions() async {
-    // Step 1: Foreground location ("While using the app")
+    // iOS: skip permission_handler entirely — it's unreliable on iOS 26 and
+    // opens Settings unexpectedly. Geolocator requests permission natively
+    // when the stream starts. iOS has already shown the system prompt.
+    if (Platform.isIOS) return true;
+
+    // Step 1: Foreground location ("While using the app") — Android only
     var locWhenInUse = await Permission.locationWhenInUse.status;
     if (!locWhenInUse.isGranted) {
       locWhenInUse = await Permission.locationWhenInUse.request();
@@ -1304,11 +1304,6 @@ class _DriverDashboardState extends State<DriverDashboard>
     }
 
     // Step 2: Background location ("Allow all the time")
-    // On Android 10+, locationAlways.request() shows a system dialog (or opens
-    // the app's location settings page). We must NOT show our own dialog after
-    // request() returns — the user already saw the system UI, and showing
-    // another dialog on top causes the double-dialog issue on all Android devices.
-    // If the user didn't grant it, show a snackbar and let them retry.
     var locAlways = await Permission.locationAlways.status;
     if (!locAlways.isGranted) {
       await Permission.locationAlways.request();
@@ -1328,15 +1323,9 @@ class _DriverDashboardState extends State<DriverDashboard>
     }
 
     // Step 4: Battery optimization exemption — CRITICAL for OEM phones
-    // (OnePlus, Realme, Oppo, Xiaomi, Vivo, Huawei) that aggressively kill
-    // background services. Without this, the location service dies after
-    // 10-40 minutes.
     await _ensureBatteryOptimizationExemption();
 
-    // Step 5: Show OEM-specific autostart guidance on first journey start.
-    // OnePlus, Realme, Oppo, Xiaomi have a proprietary "autostart" permission
-    // that is separate from Android's battery optimization. Without enabling
-    // it, the foreground service can still be killed.
+    // Step 5: OEM-specific autostart guidance on first journey start
     await _showAutoStartGuidanceIfNeeded();
 
     return true;
@@ -1554,10 +1543,8 @@ class _DriverDashboardState extends State<DriverDashboard>
     }
 
     // ── Request background-location & notification permissions ──
-    if (Platform.isAndroid) {
-      final permissionGranted = await _ensureLocationPermissions();
-      if (!permissionGranted) return;
-    }
+    final permissionGranted = await _ensureLocationPermissions();
+    if (!permissionGranted) return;
 
     bool loadingDialogShown = false;
     try {

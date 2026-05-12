@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:bestseeds/utils/app_cache_helper.dart';
 
 class GoogleMapsService {
-  static const String _apiKey = 'AIzaSyDLVwCSkXWOjo49WNNwx7o0DSwomoFvbP0';
+  static const String _apiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
 
   // ───────────────────────────────────────────────────────────────────────
   // PERSISTENT RESPONSE CACHE (SQLite, via AppCacheHelper)
@@ -33,8 +33,7 @@ class GoogleMapsService {
 
   static Future<Map<String, dynamic>?> _cacheGet(String key) async {
     try {
-      final raw =
-          await AppCacheHelper.getFresh(_cachePrefix + key, _cacheTTL);
+      final raw = await AppCacheHelper.getFresh(_cachePrefix + key, _cacheTTL);
       if (raw == null) return null;
       return jsonDecode(raw) as Map<String, dynamic>?;
     } catch (_) {
@@ -270,7 +269,8 @@ class GoogleMapsService {
           if (encoded == null || encoded.isEmpty) continue;
           final stepPts = _decodePolyline(encoded);
           // Skip step-boundary duplicates
-          final start = (merged.isNotEmpty && stepPts.isNotEmpty &&
+          final start = (merged.isNotEmpty &&
+                  stepPts.isNotEmpty &&
                   stepPts.first.latitude == merged.last.latitude &&
                   stepPts.first.longitude == merged.last.longitude)
               ? 1
@@ -488,19 +488,22 @@ class GoogleMapsService {
         List<LatLng> filteredWaypoints = [];
         for (final wp in routeWaypoints) {
           if (_haversineDistance(origin, wp) < 5000) {
-            debugPrint('Skipping waypoint too close to origin: ${wp.latitude},${wp.longitude} '
+            debugPrint(
+                'Skipping waypoint too close to origin: ${wp.latitude},${wp.longitude} '
                 '(${_haversineDistance(origin, wp).toStringAsFixed(0)}m)');
             continue;
           }
           if (_haversineDistance(destination, wp) < 5000) {
-            debugPrint('Skipping waypoint too close to destination: ${wp.latitude},${wp.longitude}');
+            debugPrint(
+                'Skipping waypoint too close to destination: ${wp.latitude},${wp.longitude}');
             continue;
           }
           bool isDuplicate = false;
           for (final existing in filteredWaypoints) {
             if (_haversineDistance(existing, wp) < 5000) {
               isDuplicate = true;
-              debugPrint('Skipping duplicate waypoint: ${wp.latitude},${wp.longitude}');
+              debugPrint(
+                  'Skipping duplicate waypoint: ${wp.latitude},${wp.longitude}');
               break;
             }
           }
@@ -509,9 +512,11 @@ class GoogleMapsService {
             allWaypoints.add('${wp.latitude},${wp.longitude}');
           }
         }
-        debugPrint('Waypoints: ${routeWaypoints.length} raw → ${filteredWaypoints.length} after filtering');
+        debugPrint(
+            'Waypoints: ${routeWaypoints.length} raw → ${filteredWaypoints.length} after filtering');
       } else if (driverPosition != null) {
-        allWaypoints.add('${driverPosition.latitude},${driverPosition.longitude}');
+        allWaypoints
+            .add('${driverPosition.latitude},${driverPosition.longitude}');
       }
       String waypointsParam = '';
       if (allWaypoints.isNotEmpty) {
@@ -526,15 +531,24 @@ class GoogleMapsService {
         '&key=$_apiKey',
       );
 
-      debugPrint('Directions API: origin=${origin.latitude},${origin.longitude} '
+      debugPrint(
+          'Directions API: origin=${origin.latitude},${origin.longitude} '
           'dest=${destination.latitude},${destination.longitude} '
           'waypoints=${routeWaypoints.length} driver=${driverPosition != null}');
 
       final response = await http.get(url);
-      if (response.statusCode != 200) return {};
+      if (response.statusCode != 200) {
+        debugPrint(
+            'Directions API HTTP ${response.statusCode}: ${response.body}');
+        return {};
+      }
 
       final data = json.decode(response.body);
-      if (data['status'] != 'OK') return {};
+      if (data['status'] != 'OK') {
+        debugPrint(
+            'Directions API status=${data['status']} error=${data['error_message']}');
+        return {};
+      }
 
       final route = data['routes'][0];
       final legs = route['legs'] as List;
@@ -604,7 +618,8 @@ class GoogleMapsService {
           }
         }
 
-        debugPrint('Multi-drop route split: pickupToDriver=${pickupToDriverDist.toStringAsFixed(0)}m, '
+        debugPrint(
+            'Multi-drop route split: pickupToDriver=${pickupToDriverDist.toStringAsFixed(0)}m, '
             'driverIdx=$driverIdx/${allPoints.length}, totalDuration=${totalDurationSeconds}s');
 
         completedPoints = allPoints.sublist(0, driverIdx + 1);
@@ -629,16 +644,19 @@ class GoogleMapsService {
             : allPoints.length;
         double currentLegTotalDist = 0;
         for (int i = currentLegStart + 1; i < currentLegEnd; i++) {
-          currentLegTotalDist += _haversineDistance(allPoints[i - 1], allPoints[i]);
+          currentLegTotalDist +=
+              _haversineDistance(allPoints[i - 1], allPoints[i]);
         }
         double currentLegCompletedDist = 0;
         for (int i = currentLegStart + 1; i <= driverIdx; i++) {
-          currentLegCompletedDist += _haversineDistance(allPoints[i - 1], allPoints[i]);
+          currentLegCompletedDist +=
+              _haversineDistance(allPoints[i - 1], allPoints[i]);
         }
         double currentLegRemainingFraction = currentLegTotalDist > 0
             ? 1.0 - (currentLegCompletedDist / currentLegTotalDist)
             : 1.0;
-        remainingSeconds += (legDurations[driverLegIdx] * currentLegRemainingFraction).round();
+        remainingSeconds +=
+            (legDurations[driverLegIdx] * currentLegRemainingFraction).round();
         completedSeconds = totalDurationSeconds - remainingSeconds;
 
         debugPrint('Duration: driverInLeg=$driverLegIdx/${legs.length}, '
@@ -663,8 +681,7 @@ class GoogleMapsService {
         remainingSeconds = totalDurationSeconds;
       } else {
         // No driver position, no waypoints — single leg, full route as remaining
-        final encodedPolyline =
-            route['overview_polyline']['points'] as String;
+        final encodedPolyline = route['overview_polyline']['points'] as String;
         remainingPoints = _decodePolyline(encodedPolyline);
         totalDurationSeconds = legs[0]['duration']['value'] as int;
         totalDistanceMeters = legs[0]['distance']['value'] as int;
@@ -687,9 +704,10 @@ class GoogleMapsService {
         cumulativeDistances.add(cumulativeDistances.last + segDist);
       }
       double totalPolylineDist = cumulativeDistances.last;
-      double driverDistanceOnRoute = driverSplitIndex < cumulativeDistances.length
-          ? cumulativeDistances[driverSplitIndex]
-          : 0;
+      double driverDistanceOnRoute =
+          driverSplitIndex < cumulativeDistances.length
+              ? cumulativeDistances[driverSplitIndex]
+              : 0;
 
       // Determine number of stops based on route distance (minimum 3)
       int numStops;
@@ -784,12 +802,12 @@ class GoogleMapsService {
     final desiredCount = segmentKm >= 220
         ? 7
         : segmentKm >= 160
-        ? 6
-        : segmentKm >= 120
-        ? 5
-        : segmentKm >= 80
-        ? 4
-        : count;
+            ? 6
+            : segmentKm >= 120
+                ? 5
+                : segmentKm >= 80
+                    ? 4
+                    : count;
     final targetCount = max(count, desiredCount);
     final candidateCount = min(max(targetCount * 4, 8), 24);
     final interval = segmentDist / (candidateCount + 1);
@@ -856,8 +874,7 @@ class GoogleMapsService {
   static List<LatLng> _decodeStepsPolyline(List steps) {
     List<LatLng> points = [];
     for (var step in steps) {
-      final stepPoints =
-          _decodePolyline(step['polyline']['points'] as String);
+      final stepPoints = _decodePolyline(step['polyline']['points'] as String);
       if (points.isNotEmpty && stepPoints.isNotEmpty) {
         points.addAll(stepPoints.sublist(1));
       } else {
@@ -877,8 +894,9 @@ class GoogleMapsService {
       if (cumulativeDistances[j] >= targetDist) {
         double segStart = cumulativeDistances[j - 1];
         double segEnd = cumulativeDistances[j];
-        double fraction =
-            (segEnd - segStart) > 0 ? (targetDist - segStart) / (segEnd - segStart) : 0;
+        double fraction = (segEnd - segStart) > 0
+            ? (targetDist - segStart) / (segEnd - segStart)
+            : 0;
         return LatLng(
           polylinePoints[j - 1].latitude +
               (polylinePoints[j].latitude - polylinePoints[j - 1].latitude) *

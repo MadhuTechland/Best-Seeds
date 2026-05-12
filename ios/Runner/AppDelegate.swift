@@ -13,7 +13,7 @@ import UserNotifications
   ) -> Bool {
     FirebaseApp.configure()
 
-    GMSServices.provideAPIKey("AIzaSyDLVwCSkXWOjo49WNNwx7o0DSwomoFvbP0")
+    GMSServices.provideAPIKey("AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I")
 
     UNUserNotificationCenter.current().delegate = self
 

@@ -412,4 +412,29 @@ class NotificationService {
     await _fcm.unsubscribeFromTopic(topic);
     print('FCM Unsubscribed from topic: $topic');
   }
+
+  /// Fire a local test notification immediately. Use to verify notifications
+  /// are working on the current device/OS.
+  Future<void> showTestNotification() async {
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'high_importance_channel',
+        'High Importance Notifications',
+        importance: Importance.max,
+        priority: Priority.high,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+    await _localNotifications.show(
+      9999,
+      'Test Notification',
+      'Notifications are working on this device!',
+      details,
+    );
+    print('FCM: Test notification fired');
+  }
 }

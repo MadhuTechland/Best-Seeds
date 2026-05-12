@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
@@ -43,6 +44,7 @@ const Duration activeCaptureInterval = Duration(seconds: 90);
 /// Initialize WorkManager and register the periodic guardian task.
 /// Call once in main() after WidgetsFlutterBinding.ensureInitialized().
 Future<void> initializeWorkManager() async {
+  if (!Platform.isAndroid) return;
   await Workmanager().initialize(
     _workManagerCallbackDispatcher,
     isInDebugMode: false,
@@ -52,6 +54,7 @@ Future<void> initializeWorkManager() async {
 /// Register the periodic guardian task.
 /// Call this when a journey starts (after BackgroundLocationService.start()).
 Future<void> registerGuardianTask() async {
+  if (!Platform.isAndroid) return;
   await Workmanager().registerPeriodicTask(
     guardianTaskName,
     guardianTaskName,
@@ -73,6 +76,7 @@ Future<void> registerGuardianTask() async {
 
 /// Cancel the guardian task when the journey ends.
 Future<void> cancelGuardianTask() async {
+  if (!Platform.isAndroid) return;
   await Workmanager().cancelByTag(guardianTaskTag);
   print('WorkManager: Guardian task cancelled');
 }
@@ -86,6 +90,7 @@ Future<void> cancelGuardianTask() async {
 Future<void> registerActiveCaptureTask({
   Duration delay = activeCaptureInterval,
 }) async {
+  if (!Platform.isAndroid) return;
   await Workmanager().registerOneOffTask(
     activeCaptureTaskName,
     activeCaptureTaskName,
@@ -112,6 +117,7 @@ Future<void> registerActiveCaptureTask({
 
 /// Cancel the active-capture chain when the journey ends.
 Future<void> cancelActiveCaptureTask() async {
+  if (!Platform.isAndroid) return;
   await Workmanager().cancelByTag(activeCaptureTaskTag);
   print('WorkManager: Active-capture chain cancelled');
 }

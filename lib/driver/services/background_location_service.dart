@@ -13,6 +13,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'ios_location_service.dart';
 import 'tracking_database.dart';
 import 'tracking_logger.dart';
 import 'tracking_work_manager.dart';
@@ -128,6 +129,15 @@ class BackgroundLocationService {
     TrackingLogger.log('▶ service.start() requested');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, true);
+
+    if (Platform.isIOS) {
+      // On iOS flutter_background_service creates a secondary FlutterEngine
+      // whose CLLocationManager does NOT receive background callbacks from
+      // iOS Core Location. Run the stream directly in the main isolate instead.
+      await IosLocationService.start();
+      return;
+    }
+
     await _prepareAndroidBackgroundExecution();
 
     final isRunning = await _service.isRunning();
@@ -135,13 +145,7 @@ class BackgroundLocationService {
       await _service.startService();
     }
 
-    // Register WorkManager guardian — OS-guaranteed 15-min periodic
-    // task that will restart the foreground service if OEM kills it.
     await registerGuardianTask();
-    // Register the 5-min active-capture chain. Each one-off task
-    // fires getCurrentPosition() from its own isolate and re-arms
-    // the next task, so we get sub-15-min forced updates even when
-    // Doze has suspended the main foreground service.
     await registerActiveCaptureTask();
   }
 
@@ -152,21 +156,25 @@ class BackgroundLocationService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_serviceRunningKey, false);
 
+    if (Platform.isIOS) {
+      await IosLocationService.stop();
+      await TrackingDatabase.clearAll();
+      return;
+    }
+
     final isRunning = await _service.isRunning();
     if (isRunning) {
       _service.invoke('stop');
     }
 
-    // Cancel both WorkManager chains since the journey is over.
     await cancelGuardianTask();
     await cancelActiveCaptureTask();
-
-    // Clear the SQLite queue
     await TrackingDatabase.clearAll();
   }
 
   /// Check if the service is currently running.
   static Future<bool> isRunning() async {
+    if (Platform.isIOS) return IosLocationService.isActive;
     return await _service.isRunning();
   }
 
@@ -183,25 +191,25 @@ class BackgroundLocationService {
   static Future<void> restartIfNeeded() async {
     final shouldRun = await shouldBeRunning();
     final running = await isRunning();
-    if (shouldRun && !running) {
-      print('BackgroundLocationService: Service was killed, restarting...');
-      await _prepareAndroidBackgroundExecution();
-      await _service.startService();
-      // Verify it actually started
-      await Future.delayed(const Duration(seconds: 2));
-      final nowRunning = await isRunning();
-      if (!nowRunning) {
-        print('BackgroundLocationService: Restart failed, retrying...');
-        await _service.startService();
-      }
+    if (!shouldRun || running) return;
 
-      // Re-register BOTH WorkManager tasks.
-      // Previously only guardian was re-registered here — activeCaptureTask
-      // was missing, so every OEM kill → guardian restart left the 2-min
-      // backup chain dead for the rest of the journey.
-      await registerGuardianTask();
-      await registerActiveCaptureTask();
+    if (Platform.isIOS) {
+      print('BackgroundLocationService: iOS stream not active, restarting...');
+      await IosLocationService.start();
+      return;
     }
+
+    print('BackgroundLocationService: Service was killed, restarting...');
+    await _prepareAndroidBackgroundExecution();
+    await _service.startService();
+    await Future.delayed(const Duration(seconds: 2));
+    final nowRunning = await isRunning();
+    if (!nowRunning) {
+      print('BackgroundLocationService: Restart failed, retrying...');
+      await _service.startService();
+    }
+    await registerGuardianTask();
+    await registerActiveCaptureTask();
   }
 
   static Future<void> _prepareAndroidBackgroundExecution() async {
