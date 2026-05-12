@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Bestseeds</string>
+	<string>Drive Bestseed</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>bestseeds</string>
+	<string>Drive Bestseed</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -58,5 +58,19 @@
 	<string>Best Seeds needs your location even when the app is in the background to continuously track your delivery journey and keep customers updated.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Best Seeds needs your location even when the app is in the background to continuously track your delivery journey and keep customers updated.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Best Seeds needs camera access to capture photos for delivery proof and profile pictures.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Best Seeds needs photo library access to select images for delivery proof and profile pictures.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Best Seeds needs to save photos to your library.</string>
+	<key>FirebaseMessagingAutoInitEnabled</key>
+	<true/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.driver.bestseed.processing</string>
+		<string>com.transistorsoft.fetch</string>
+		<string>com.transistorsoft.customtask</string>
+	</array>
 </dict>
 </plist>

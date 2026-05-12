@@ -2,6 +2,7 @@ import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/tracking_work_manager.dart';
 import 'package:bestseeds/services/notification_service.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:bestseeds/firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:bestseeds/routes/app_routes.dart';
@@ -14,7 +15,9 @@ void main() async {
   prefs = await SharedPreferences.getInstance();
 
   // Initialize Firebase
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   // Initialize push notification service (FCM + local notifications)
   final notificationService = NotificationService();

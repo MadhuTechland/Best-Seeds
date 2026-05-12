@@ -1,0 +1,12 @@
+Initial iOS release of Drive Bestseed!
+
+- Real-time GPS vehicle tracking with live map updates
+- Booking management for hatchery and spot deliveries
+- Multi-stage delivery status workflow
+- Driver and employee dashboards
+- Route visualization with deviation alerts
+- Background location tracking for active deliveries
+- Push notifications for booking updates
+- Offline data caching and sync
+- OTP-based secure authentication
+- WhatsApp and phone support integration

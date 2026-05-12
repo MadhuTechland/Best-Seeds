@@ -1,0 +1,41 @@
+Drive Bestseed is a professional delivery management platform built for the aquaculture seed logistics industry. Whether you're a driver delivering seeds or a manager overseeing operations, this app keeps your entire delivery workflow running smoothly in real time.
+
+KEY FEATURES
+
+Real-Time GPS Vehicle Tracking
+Track delivery vehicles live on an interactive map with real-time location updates, route visualization, and deviation alerts. Managers can monitor all active deliveries from a single dashboard.
+
+Smart Booking Management
+Create and manage bookings for hatchery deliveries, spot orders, and vehicle availability. Filter by status, search by booking ID or location, and track every order from creation to completion.
+
+Multi-Stage Delivery Workflow
+Follow each delivery through a clear 6-stage pipeline: Pending, Confirmed, Driver Assigned, In Journey, Delivered, or Failed. Every status change is tracked and visible to all stakeholders.
+
+Driver & Employee Dashboards
+Drivers see their assigned bookings, active routes, and delivery history. Managers get a comprehensive overview with advanced filtering, booking creation, alert monitoring, and driver tracking.
+
+Route Visualization & Navigation
+View pickup, drop-off, and current vehicle positions on Google Maps with route polylines. The app detects route deviations and alerts managers automatically.
+
+Background Location Tracking
+Continuous GPS tracking runs reliably in the background during active deliveries, ensuring no location data is lost even when the app is minimized.
+
+Push Notifications & Alerts
+Instant notifications for new bookings, status updates, route deviations, and delivery completions powered by Firebase Cloud Messaging.
+
+Delivery Proof & Failure Logging
+Mark deliveries as completed or record failure reasons (delays, wrong quantity, quality issues) for full accountability and reporting.
+
+Multi-Drop Route Support
+Handle complex delivery routes with multiple drop-off points. Track each drop individually with customer details, quantities, and completion status.
+
+Secure Authentication
+OTP-based mobile login ensures only authorized drivers and employees can access the platform.
+
+Offline Capability
+Local data caching means the app works reliably even in areas with poor connectivity. Data syncs automatically when connection is restored.
+
+Built-in Support
+Get help directly through WhatsApp or phone call integration within the app.
+
+Drive Bestseed is trusted by aquaculture hatcheries, seed vendors, and logistics teams to deliver seeds safely and on time. Download now and take control of your delivery operations.

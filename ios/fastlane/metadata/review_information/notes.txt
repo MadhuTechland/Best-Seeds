@@ -1,0 +1,1 @@
+This is a delivery management app for seed logistics. Driver login requires OTP verification via mobile number. For testing, please use the demo credentials that will be provided upon request at bestseed25@gmail.com.

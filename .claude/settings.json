@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pod install:*)",
+      "Bash(gem install:*)",
+      "Bash(fastlane pilot:*)",
+      "Bash(FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD=\"czvs-vwwb-vkzv-ppyo\" fastlane metadata)"
+    ]
+  }
+}
