@@ -3039,14 +3039,20 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
         if (isDriverHere) {
           time = _formatDateTime(driverLoc.updatedAt);
         } else if (isPassed) {
-          // Use locked time if available, otherwise use backend passed_at, then compute.
-          if (_passedStopTimes.containsKey(i)) {
+          final passedAt = stop['passed_at'] as String?;
+          if (passedAt != null && passedAt.isNotEmpty) {
+            time = _formatDateTime(passedAt);
+            if (time != '-' && _passedStopTimes[i] != time) {
+              _passedStopTimes[i] = time;
+              newTimesLocked = true;
+            }
+          } else if (_passedStopTimes.containsKey(i)) {
             time = _passedStopTimes[i]!;
           } else {
             // Prefer backend-provided passed_at ISO timestamp — exact, no math needed.
-            final passedAt = stop['passed_at'] as String?;
-            if (passedAt != null && passedAt.isNotEmpty) {
-              time = _formatDateTime(passedAt);
+            final fallbackPassedAt = stop['passed_at'] as String?;
+            if (fallbackPassedAt != null && fallbackPassedAt.isNotEmpty) {
+              time = _formatDateTime(fallbackPassedAt);
             } else {
               final dt = _computeDateTimeForFraction(stopFraction);
               final clamped = (dt != null && destDt != null && dt.isAfter(destDt))
@@ -3280,6 +3286,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
         'lat': lat,
         'lng': lng,
         'is_key_stop': false,
+        if (pt['passed_at'] != null) 'passed_at': pt['passed_at'],
+        if (pt['estimated_arrival'] != null)
+          'estimated_arrival': pt['estimated_arrival'],
+        if (pt['estimated_date'] != null) 'estimated_date': pt['estimated_date'],
       });
     }
 
@@ -3370,6 +3380,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
         'lat': lat,
         'lng': lng,
         'is_key_stop': false,
+        if (pt['passed_at'] != null) 'passed_at': pt['passed_at'],
+        if (pt['estimated_arrival'] != null)
+          'estimated_arrival': pt['estimated_arrival'],
+        if (pt['estimated_date'] != null) 'estimated_date': pt['estimated_date'],
       });
     }
 
@@ -3467,8 +3481,17 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
     final now = DateTime.now();
     if (recomputedIndex > _currentStopIndex) {
       for (int j = _currentStopIndex + 1; j <= recomputedIndex; j++) {
+        final stopData = _fixedStops[j];
+        final passedAt = stopData['passed_at'] as String?;
+        if (passedAt != null && passedAt.isNotEmpty) {
+          final formatted = _formatDateTime(passedAt);
+          if (formatted != '-') {
+            _passedStopTimes[j] = formatted;
+            continue;
+          }
+        }
+
         if (!_passedStopTimes.containsKey(j)) {
-          final stopData = _fixedStops[j];
           final stopLatLng = LatLng(
             stopData['lat'] as double,
             stopData['lng'] as double,
@@ -3480,17 +3503,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
                   ? 'near'
                   : 'bypass';
 
-          final passedAt = stopData['passed_at'] as String?;
-          if (passedAt != null && passedAt.isNotEmpty) {
-            final formatted = _formatDateTime(passedAt);
-            _passedStopTimes[j] =
-                formatted != '-' ? formatted : _formatDateTimeObj(now);
-          } else {
-            final stopFraction = _getStopFraction(j);
-            final dt = _computeDateTimeForFraction(stopFraction);
-            _passedStopTimes[j] =
-                dt != null ? _formatDateTimeObj(dt) : _formatDateTimeObj(now);
-          }
+          final stopFraction = _getStopFraction(j);
+          final dt = _computeDateTimeForFraction(stopFraction);
+          _passedStopTimes[j] =
+              dt != null ? _formatDateTimeObj(dt) : _formatDateTimeObj(now);
         }
       }
     } else {
@@ -3590,7 +3606,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
     final driverId = _trackingData?.vehicleId ?? 0;
     final startedDate = _trackingData?.pickup.updatedAt ?? '';
     final autoCount = _trackingData?.autoTimelinePoints.length ?? 0;
-    return '${driverId}_${startedDate}_a$autoCount';
+    final passedSignature = (_trackingData?.autoTimelinePoints ?? [])
+        .map((pt) => pt['passed_at']?.toString() ?? '')
+        .join('|');
+    return '${driverId}_${startedDate}_a${autoCount}_p$passedSignature';
   }
 
   /// Save fixed stops to SharedPreferences with a cache signature.
