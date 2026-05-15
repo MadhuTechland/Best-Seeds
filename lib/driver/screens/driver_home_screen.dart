@@ -1275,10 +1275,18 @@ class _DriverDashboardState extends State<DriverDashboard>
   /// Ensures both foreground + background location and notification permissions
   /// are granted. Returns true if all required permissions are good.
   Future<bool> _ensureLocationPermissions() async {
-    // iOS: skip permission_handler entirely — it's unreliable on iOS 26 and
-    // opens Settings unexpectedly. Geolocator requests permission natively
-    // when the stream starts. iOS has already shown the system prompt.
-    if (Platform.isIOS) return true;
+    if (Platform.isIOS) {
+      // iOS: never show custom dialogs — the system handles permission prompts.
+      // Only trigger the system dialog on first launch (when denied).
+      // whileInUse is acceptable — tracking works while app is open/suspended.
+      // deniedForever silently blocks start; driver must fix in Settings themselves.
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      return permission != LocationPermission.denied &&
+          permission != LocationPermission.deniedForever;
+    }
 
     // Step 1: Foreground location ("While using the app") — Android only
     var locWhenInUse = await Permission.locationWhenInUse.status;

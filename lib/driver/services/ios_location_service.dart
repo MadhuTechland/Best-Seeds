@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -26,6 +27,8 @@ const String _iosServiceRunningKey = 'bg_location_service_running';
 /// alive via the "location" UIBackgroundMode and "Always Allow" permission.
 class IosLocationService {
   IosLocationService._();
+
+  static const _watchdog = MethodChannel('com.bestseed/location_watchdog');
 
   static StreamSubscription<Position>? _subscription;
   static DateTime? _lastSentAt;
@@ -81,10 +84,19 @@ class IosLocationService {
       cancelOnError: false,
     );
 
+    // Tell AppDelegate to start native significant-location-changes watchdog
+    // so iOS can relaunch the app and post locations if it gets terminated.
+    try {
+      await _watchdog.invokeMethod('startWatchdog');
+    } catch (_) {}
+
     print('IosLocationService: tracking started in main isolate');
   }
 
   static Future<void> stop() async {
+    try {
+      await _watchdog.invokeMethod('stopWatchdog');
+    } catch (_) {}
     await _notif.cancel(_iosTrackingNotifId);
     await _subscription?.cancel();
     _subscription = null;
@@ -200,7 +212,6 @@ class IosLocationService {
         _lastSentAt = now;
         _lastSentPosition = position;
         await TrackingDatabase.markAllSent();
-        await _showTrackingNotification(locationName);
         print('IosLocationService: ✓ '
             '${position.latitude.toStringAsFixed(6)}, '
             '${position.longitude.toStringAsFixed(6)} → $locationName');
