@@ -1,3 +1,4 @@
+import 'package:bestseeds/driver/widgets/driver_location_permission.dart';
 import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
@@ -48,7 +49,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
             _locationError = 'Location service is off';
           });
         }
-        AppSnackbar.error('Location service is off. Please turn on GPS and try again.');
         return;
       }
 
@@ -63,7 +63,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
               _locationError = 'Location permission denied';
             });
           }
-          AppSnackbar.error('Location permission denied');
           return;
         }
       }
@@ -75,9 +74,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
             _locationError = 'Location permission denied forever';
           });
         }
-        AppSnackbar.error(
-          'Location permission is permanently denied. Please enable it from app settings.',
-        );
         return;
       }
 
@@ -218,7 +214,8 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
 
-    return Scaffold(
+    return DriverLocationGuard(
+      child: Scaffold(
       body: SingleChildScrollView(
         child: Container(
           width: width,
@@ -498,6 +495,7 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

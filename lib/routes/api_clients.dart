@@ -175,9 +175,11 @@ class ApiClient {
       print('API CLIENT: Parsed Response -> $data');
       return data;
     } else {
-      // 401 = token revoked (driver logged in on another device)
-      // Force logout so only the latest device stays active.
-      if (response.statusCode == 401) {
+      // 401 = token revoked (driver logged in on another device).
+      // Only force-logout when the failing request actually carried a token —
+      // pre-login endpoints (send/verify/resend OTP) also return 401 on bad
+      // input and must not kick the user back to the login screen.
+      if (response.statusCode == 401 && token != null) {
         _handleForceLogout();
       }
 
@@ -287,8 +289,9 @@ class ApiClient {
       print('API CLIENT MULTIPART: Parsed Response -> $data');
       return data;
     } else {
-      // 401 = token revoked (driver logged in on another device)
-      if (response.statusCode == 401) {
+      // 401 = token revoked (driver logged in on another device).
+      // Only force-logout when this multipart request actually carried a token.
+      if (response.statusCode == 401 && token != null) {
         _handleForceLogout();
       }
 

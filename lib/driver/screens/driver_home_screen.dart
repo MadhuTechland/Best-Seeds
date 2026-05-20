@@ -10,7 +10,9 @@ import 'package:bestseeds/driver/screens/tracking_logs_screen.dart';
 import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/driver/services/tracking_alert_service.dart';
+import 'package:bestseeds/driver/widgets/driver_location_permission.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:bestseeds/widgets/route_visualization.dart';
 import 'package:flutter/material.dart';
@@ -185,6 +187,45 @@ class _DriverDashboardState extends State<DriverDashboard>
     });
   }
 
+  Future<void> _pickLocation() async {
+    // Open the full-screen map picker straight away — same UX as the
+    // customer app's location header (no intermediate bottom sheet).
+    final result = await Navigator.of(context).push<LocationData>(
+      MaterialPageRoute(
+        builder: (_) => LocationPickerScreen(
+          initialLatitude: _storage.getLocationLat(),
+          initialLongitude: _storage.getLocationLng(),
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    await _storage.saveLocation(
+      latitude: result.latitude,
+      longitude: result.longitude,
+      address: result.address,
+    );
+
+    final token = _driver?.token;
+    if (token != null && token.isNotEmpty) {
+      try {
+        await _repo.updateCurrentLocation(
+          token: token,
+          latitude: result.latitude,
+          longitude: result.longitude,
+          address: result.address,
+        );
+      } catch (e) {
+        debugPrint('Driver updateCurrentLocation failed: $e');
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _locationAddress = result.address;
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
@@ -349,7 +390,8 @@ class _DriverDashboardState extends State<DriverDashboard>
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
 
-    return Scaffold(
+    return DriverLocationGuard(
+      child: Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       body: SafeArea(
         child: Column(
@@ -369,6 +411,7 @@ class _DriverDashboardState extends State<DriverDashboard>
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -409,8 +452,9 @@ class _DriverDashboardState extends State<DriverDashboard>
                     ),
                   ),
                 ),
-                if (_locationAddress != null && _locationAddress!.isNotEmpty)
-                  Row(
+                InkWell(
+                  onTap: _pickLocation,
+                  child: Row(
                     children: [
                       Icon(
                         Icons.location_on,
@@ -420,7 +464,10 @@ class _DriverDashboardState extends State<DriverDashboard>
                       SizedBox(width: width * 0.01),
                       Expanded(
                         child: Text(
-                          _locationAddress!,
+                          (_locationAddress != null &&
+                                  _locationAddress!.isNotEmpty)
+                              ? _locationAddress!
+                              : 'Set your location',
                           style: TextStyle(
                             fontSize: width * 0.032,
                             color: Colors.grey.shade600,
@@ -429,8 +476,14 @@ class _DriverDashboardState extends State<DriverDashboard>
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: width * 0.04,
+                        color: Colors.grey.shade500,
+                      ),
                     ],
                   ),
+                ),
               ],
             ),
           ),

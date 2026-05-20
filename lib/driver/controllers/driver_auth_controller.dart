@@ -18,6 +18,9 @@ class DriverAuthController extends GetxController {
   RxBool isLoading = false.obs;
   RxString mobile = ''.obs;
   RxInt resendTimer = 0.obs;
+  // Incremented whenever the OTP screen should clear its input boxes
+  // (after a failed verify, or after a successful resend).
+  RxInt otpClearSignal = 0.obs;
 
   Future<void> sendOtp(String phoneNumber) async {
     try {
@@ -100,6 +103,8 @@ class DriverAuthController extends GetxController {
     } catch (e) {
       print('Controller ERROR: $e');
       AppSnackbar.error(extractErrorMessage(e));
+      // Wrong / expired OTP — wipe the boxes so the driver can re-enter cleanly.
+      otpClearSignal.value++;
     } finally {
       isLoading.value = false;
     }
@@ -145,6 +150,8 @@ class DriverAuthController extends GetxController {
         result['message'] ?? 'OTP resent successfully',
       );
       startResendTimer();
+      // Wipe digits from the now-invalidated previous OTP.
+      otpClearSignal.value++;
     } catch (e) {
       print('Controller ERROR: $e');
       AppSnackbar.error(extractErrorMessage(e));

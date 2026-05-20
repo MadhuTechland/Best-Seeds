@@ -20,6 +20,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   // Track if OTP is complete (6 digits)
   bool _isOtpComplete = false;
+  Worker? _clearWorker;
 
   String get otpCode => otpControllers.map((c) => c.text).join();
 
@@ -32,10 +33,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     for (var ctrl in otpControllers) {
       ctrl.addListener(_checkOtpComplete);
     }
+    // Clear boxes when the controller signals (wrong OTP / resent OTP).
+    _clearWorker = ever<int>(controller.otpClearSignal, (_) => _clearOtpFields());
   }
 
   @override
   void dispose() {
+    _clearWorker?.dispose();
     for (var ctrl in otpControllers) {
       ctrl.removeListener(_checkOtpComplete);
       ctrl.dispose();
@@ -52,6 +56,15 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       setState(() {
         _isOtpComplete = isComplete;
       });
+    }
+  }
+
+  void _clearOtpFields() {
+    for (final ctrl in otpControllers) {
+      ctrl.clear();
+    }
+    if (focusNodes.isNotEmpty) {
+      focusNodes.first.requestFocus();
     }
   }
 

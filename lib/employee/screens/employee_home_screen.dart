@@ -8,6 +8,7 @@ import 'package:bestseeds/employee/screens/vehicle_tracking_map_screen.dart';
 import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -118,6 +119,40 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     final address = _storage.getLocationAddress();
     setState(() {
       _locationAddress = address;
+    });
+  }
+
+  Future<void> _pickLocation() async {
+    final result = await LocationSelector.show(
+      context: context,
+      initialLatitude: _storage.getLocationLat(),
+      initialLongitude: _storage.getLocationLng(),
+    );
+    if (result == null || !mounted) return;
+
+    await _storage.saveLocation(
+      latitude: result.latitude,
+      longitude: result.longitude,
+      address: result.address,
+    );
+
+    final token = _user?.token;
+    if (token != null && token.isNotEmpty) {
+      try {
+        await _repo.updateCurrentLocation(
+          token: token,
+          latitude: result.latitude,
+          longitude: result.longitude,
+          address: result.address,
+        );
+      } catch (e) {
+        debugPrint('Vendor updateCurrentLocation failed: $e');
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _locationAddress = result.address;
     });
   }
 
@@ -536,8 +571,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                if (_locationAddress != null && _locationAddress!.isNotEmpty)
-                  Row(
+                InkWell(
+                  onTap: _pickLocation,
+                  child: Row(
                     children: [
                       Icon(
                         Icons.location_on,
@@ -547,7 +583,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                       SizedBox(width: width * 0.01),
                       Expanded(
                         child: Text(
-                          _locationAddress!,
+                          (_locationAddress != null &&
+                                  _locationAddress!.isNotEmpty)
+                              ? _locationAddress!
+                              : 'Set your location',
                           style: TextStyle(
                             fontSize: width * 0.032,
                             color: Colors.grey.shade600,
@@ -556,8 +595,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: width * 0.04,
+                        color: Colors.grey.shade500,
+                      ),
                     ],
                   ),
+                ),
               ],
             ),
           ),
@@ -1553,11 +1598,14 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () {
+                      final tapped = booking;
                       Navigator.push(
                         context,
                         MaterialPageRoute(
+                          settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
                           builder: (context) => VehicleTrackingMapScreen(
-                            booking: booking,
+                            key: ValueKey('vt-${tapped.bookingId}'),
+                            booking: tapped,
                           ),
                         ),
                       );
