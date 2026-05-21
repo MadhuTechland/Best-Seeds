@@ -1310,11 +1310,22 @@ class _BookingScreenState extends State<BookingScreen> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () {
+                      // Capture the booking ID in a local before navigating —
+                      // guarantees the closure can't drift to whichever
+                      // `booking` happens to be top-of-stack if the list
+                      // re-renders before the route is mounted. Using
+                      // ValueKey(bookingId) forces Flutter to treat each
+                      // tracking screen as a distinct widget tree, so state
+                      // never bleeds from a previous booking when the user
+                      // pops back and opens another card.
+                      final tapped = booking;
                       Navigator.push(
                         context,
                         MaterialPageRoute(
+                          settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
                           builder: (context) => VehicleTrackingMapScreen(
-                            booking: booking,
+                            key: ValueKey('vt-${tapped.bookingId}'),
+                            booking: tapped,
                           ),
                         ),
                       );

@@ -461,7 +461,10 @@ class GoogleMapsService {
     final driverKey = driverPosition == null
         ? '-'
         : '${_r3(driverPosition.latitude)},${_r3(driverPosition.longitude)}';
-    final cacheKey = 'rws:'
+    // Bumped to v2 — invalidates entries cached before the waypoint-filter
+    // relax (those entries followed straight pickup→drop paths for
+    // multi-drop bookings, skipping the priority-1 stop).
+    final cacheKey = 'rws_v2:'
         '${_r4(origin.latitude)},${_r4(origin.longitude)}>'
         '${_r4(destination.latitude)},${_r4(destination.longitude)}|'
         'd=$driverKey|wp=$waypointsKey|max=$maxStops';
@@ -482,25 +485,29 @@ class GoogleMapsService {
       // Filter out waypoints that are:
       // 1. Too close to origin (< 5km) — would cause unnecessary loop back
       // 2. Too close to destination (< 5km) — redundant
-      // 3. Too close to each other (< 5km) — duplicates
+      // Only dedup exact-overlap points (≤ 200 m). The previous 5-km
+      // radius silently stripped priority-1 drops that happened to be
+      // close to origin/destination — e.g. on a Madhapur → Ayyappa
+      // Society (1.5 km) → Kukatpally trip, Ayyappa Society was dropped
+      // and the blue line skipped it. The 200 m floor still avoids
+      // sending Google a "0 m segment" while keeping every real stop.
       List<String> allWaypoints = [];
       if (routeWaypoints.isNotEmpty) {
         List<LatLng> filteredWaypoints = [];
         for (final wp in routeWaypoints) {
-          if (_haversineDistance(origin, wp) < 5000) {
+          if (_haversineDistance(origin, wp) < 200) {
             debugPrint(
-                'Skipping waypoint too close to origin: ${wp.latitude},${wp.longitude} '
-                '(${_haversineDistance(origin, wp).toStringAsFixed(0)}m)');
+                'Skipping waypoint that matches origin: ${wp.latitude},${wp.longitude}');
             continue;
           }
-          if (_haversineDistance(destination, wp) < 5000) {
+          if (_haversineDistance(destination, wp) < 200) {
             debugPrint(
-                'Skipping waypoint too close to destination: ${wp.latitude},${wp.longitude}');
+                'Skipping waypoint that matches destination: ${wp.latitude},${wp.longitude}');
             continue;
           }
           bool isDuplicate = false;
           for (final existing in filteredWaypoints) {
-            if (_haversineDistance(existing, wp) < 5000) {
+            if (_haversineDistance(existing, wp) < 200) {
               isDuplicate = true;
               debugPrint(
                   'Skipping duplicate waypoint: ${wp.latitude},${wp.longitude}');

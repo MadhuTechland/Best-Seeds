@@ -891,11 +891,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
               Expanded(
                 child: ElevatedButton(
                   onPressed: () {
+                    final tapped = booking;
                     Navigator.push(
                       context,
                       MaterialPageRoute(
+                        settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
                         builder: (context) => VehicleTrackingMapScreen(
-                          booking: booking,
+                          key: ValueKey('vt-${tapped.bookingId}'),
+                          booking: tapped,
                         ),
                       ),
                     );

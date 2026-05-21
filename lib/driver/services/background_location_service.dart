@@ -877,7 +877,7 @@ Future<void> _onStart(ServiceInstance service) async {
         }),
       ).timeout(const Duration(seconds: 12));
 
-      print('BackgroundLocationService: API Response ${response.statusCode}');
+      print('📍 [LOC-SEND] status=${response.statusCode} lat=${position.latitude} lng=${position.longitude} acc=${position.accuracy.toStringAsFixed(1)}m body=${response.body}');
 
       final elapsedMs = DateTime.now().difference(sendStart).inMilliseconds;
 

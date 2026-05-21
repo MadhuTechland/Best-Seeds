@@ -257,28 +257,12 @@ class _DriverDashboardState extends State<DriverDashboard>
       _errorMessage = null;
     });
 
-    // Load cached data first for instant display
-    final cached = await _repo.getCachedBookings();
-    if (cached != null && cached.routes.isNotEmpty && mounted) {
-      setState(() {
-        _allRoutes = cached.routes;
-        _allCount = cached.counts.all;
-        _liveCount = cached.counts.live;
-        _assignedCount = cached.counts.assigned;
-        _pastCount = cached.counts.past;
-        _filterRoutes();
-        _isLoading = false;
-      });
-    }
-
-    // Fetch fresh data from API
+    // Always fetch fresh data from API — no cache
     final token = _storage.getToken();
     if (token == null) {
       if (mounted) {
         setState(() {
-          if (_allRoutes.isEmpty) {
-            _errorMessage = 'Session expired. Please login again.';
-          }
+          _errorMessage = 'Session expired. Please login again.';
           _isLoading = false;
         });
       }
@@ -297,19 +281,14 @@ class _DriverDashboardState extends State<DriverDashboard>
           _filterRoutes();
           _isLoading = false;
         });
-
       }
     } catch (e) {
       if (mounted) {
-        if (_allRoutes.isEmpty) {
-          setState(() {
-            _isLoading = false;
-            _errorMessage = 'Failed to load bookings. Please try again.';
-          });
-        } else {
-          setState(() => _isLoading = false);
-          AppSnackbar.error('Could not refresh bookings');
-        }
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Failed to load bookings. Please try again.';
+        });
+        AppSnackbar.error('Could not refresh bookings');
       }
       debugPrint('Error fetching bookings: $e');
     }
@@ -1647,6 +1626,7 @@ class _DriverDashboardState extends State<DriverDashboard>
         debugPrint('Could not get start location: $e');
       }
 
+      debugPrint('🚀 [START-JOURNEY] bookingIds=$bookingIds startLat=$startLat startLng=$startLng startAddress=$startAddress');
       await _repo.startJourney(
         token: token,
         bookingIds: bookingIds,
@@ -1654,6 +1634,7 @@ class _DriverDashboardState extends State<DriverDashboard>
         startLng: startLng,
         startAddress: startAddress,
       );
+      debugPrint('🚀 [START-JOURNEY] ✅ API call success for bookingIds=$bookingIds');
 
       // Dismiss loading BEFORE starting the service so that any system dialog
       // triggered by the service (e.g. Xiaomi battery opt prompt) appears on a

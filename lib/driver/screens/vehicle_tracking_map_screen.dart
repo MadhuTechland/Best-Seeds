@@ -571,34 +571,13 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
           );
         }
       } else {
-        // Fallback: straight lines if Directions API fails
-        if (_currentLatLng != null) {
-          polylines.add(
-            Polyline(
-              polylineId: const PolylineId('completed'),
-              points: [_pickupLatLng!, _currentLatLng!],
-              color: Colors.green,
-              width: 4,
-            ),
-          );
-          polylines.add(
-            Polyline(
-              polylineId: const PolylineId('remaining'),
-              points: [_currentLatLng!, _destinationLatLng!],
-              color: const Color(0xFF0077C8),
-              width: 4,
-              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-            ),
-          );
-        } else {
-          polylines.add(
-            Polyline(
-              polylineId: const PolylineId('full_route'),
-              points: [_pickupLatLng!, _destinationLatLng!],
-              color: const Color(0xFF0077C8),
-              width: 4,
-            ),
-          );
+        // Directions API failed — never draw straight chords between
+        // pickup / driver / destination. At country-scale they cross oceans
+        // and rivers; at city-scale they cut through buildings. Show no
+        // polyline until the next successful Directions call.
+        debugPrint('❌ Directions API failed — keeping previous polylines');
+        if (_polylines.isNotEmpty) {
+          polylines = Set<Polyline>.from(_polylines);
         }
       }
     }
