@@ -6,6 +6,7 @@ import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 
@@ -71,17 +72,17 @@ class ApiClient {
     StorageService().logout();
     DriverStorageService().logout();
     BackgroundLocationService.stop();
+    try { FirebaseMessaging.instance.deleteToken(); } catch (_) {}
     Get.offAllNamed(AppRoutes.login);
   }
 
   /// Force logout when admin deactivates the vendor/driver account
   void _handleAccountDeactivated(String message) {
     print('API CLIENT: Account deactivated — forcing logout');
-    // Clear both employee and driver storage
     StorageService().logout();
     DriverStorageService().logout();
-    // Stop background location service if running
     BackgroundLocationService.stop();
+    try { FirebaseMessaging.instance.deleteToken(); } catch (_) {}
     AppSnackbar.error(message);
     Get.offAllNamed(AppRoutes.login);
   }

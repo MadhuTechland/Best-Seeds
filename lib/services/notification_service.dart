@@ -98,6 +98,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // session immediately so reopening the app drops the user on login.
   if (message.data['type'] == 'force_logout') {
     await _clearDriverSessionInBackground();
+    try { await BackgroundLocationService.stop(); } catch (_) {}
+    try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
     return; // suppress the notification banner — silent logout
   }
 
@@ -283,9 +285,8 @@ class NotificationService {
   /// Mirrors the api_clients 401 force-logout path.
   Future<void> _handleDriverForceLogout() async {
     print('FCM: force_logout received — clearing driver session');
-    try {
-      BackgroundLocationService.stop();
-    } catch (_) {}
+    try { await BackgroundLocationService.stop(); } catch (_) {}
+    try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
     await DriverStorageService().logout();
     Get.offAllNamed(AppRoutes.login);
   }

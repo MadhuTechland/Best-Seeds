@@ -5,7 +5,7 @@ class AppConstants {
 
   // static String baseUrl = "http://192.168.0.104:8000/api/";
   // static String baseUrl = "http://192.168.29.111:8000/api/";
-  static String baseUrl = "https://aqua.bestseed.in/api/";
+  static String baseUrl = "https://staging.bestseed.in/api/";
 
   // Employee/Vendor APIs
   static String employeeLoginApi = "vendor/login";

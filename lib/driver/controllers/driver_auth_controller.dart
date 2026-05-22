@@ -7,6 +7,7 @@ import 'package:bestseeds/routes/api_clients.dart';
 import 'package:bestseeds/services/notification_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:bestseeds/widgets/login_location_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -181,6 +182,7 @@ class DriverAuthController extends GetxController {
       if (token != null) {
         await _repo.logout(token);
       }
+      try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
       await _storage.logout();
       Get.offAllNamed(AppRoutes.login);
     } catch (e) {

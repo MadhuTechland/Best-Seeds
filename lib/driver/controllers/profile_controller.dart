@@ -6,6 +6,7 @@ import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/driver/services/tracking_alert_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -91,12 +92,14 @@ class DriverProfileController extends GetxController {
       if (token != null) {
         await _repo.logout(token);
       }
+      await FirebaseMessaging.instance.deleteToken();
       await _storage.logout();
       Get.offAllNamed(AppRoutes.login);
     } catch (e) {
       // Even if API fails, clear local storage and logout
       TrackingAlertService.stop();
       await BackgroundLocationService.stop();
+      try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
       await _storage.logout();
       Get.offAllNamed(AppRoutes.login);
     } finally {

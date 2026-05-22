@@ -495,25 +495,24 @@ Future<void> _onStart(ServiceInstance service) async {
                     ? 'location_not_sending'
                     : 'internet_off');
 
-    // Per-type cooldown — 3 minutes between repeated alerts of the same type.
+    // Driver app: show only ONE alert per issue type (no repeats).
+    // Cooldown is cleared when the issue resolves (GPS/internet back on).
+    // Vendor/Admin notifications continue via sendTrackingAlert (unaffected).
     final lastFired = alertCooldowns[issueType];
     if (lastFired != null) {
-      final since = DateTime.now().difference(lastFired);
-      if (since < const Duration(minutes: 3)) {
-        print('BackgroundLocationService: Alert cooldown ($issueType) — '
-            '${since.inSeconds}s, skipping.');
-        return;
-      }
+      print('BackgroundLocationService: Alert already shown ($issueType), skipping repeat.');
+      // Still send to backend so vendor/admin get continuous updates
+      sendTrackingAlert(issueType);
+      return;
     }
 
     alertCooldowns[issueType] = DateTime.now();
-    lastAlertTime = DateTime.now(); // kept for dismissErrorAlert
+    lastAlertTime = DateTime.now();
     print('BackgroundLocationService: ALERT [$issueType] — $title: $body');
 
-    sendTrackingAlert(issueType); // fire-and-forget, don't await
+    sendTrackingAlert(issueType); // vendor/admin get notified
 
-    // FLAG_INSISTENT (4) makes the default notification sound loop continuously
-    // until dismissed. Auto-cancel after 15 seconds.
+    // Single notification — no FLAG_INSISTENT (no looping sound)
     await alertNotifications.show(
       _alertNotificationId,
       title,
@@ -529,14 +528,13 @@ Future<void> _onStart(ServiceInstance service) async {
           enableVibration: true,
           ongoing: false,
           autoCancel: true,
-          additionalFlags: Int32List.fromList([4]), // FLAG_INSISTENT
           ticker: 'Location tracking issue!',
         ),
       ),
     );
 
-    // Stop the looping alert sound after 15 seconds
-    Timer(const Duration(seconds: 15), () {
+    // Auto-dismiss after 10 seconds
+    Timer(const Duration(seconds: 10), () {
       alertNotifications.cancel(_alertNotificationId);
     });
   }
