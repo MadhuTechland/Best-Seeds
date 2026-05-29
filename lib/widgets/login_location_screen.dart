@@ -82,11 +82,23 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
       if (position == null) {
         try {
           position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.medium,
-            timeLimit: const Duration(seconds: 20),
+            desiredAccuracy: LocationAccuracy.low,
+            timeLimit: const Duration(seconds: 30),
           );
         } catch (e) {
-          debugPrint('getCurrentPosition failed: $e');
+          debugPrint('getCurrentPosition (low) failed: $e');
+        }
+      }
+
+      // Retry with medium accuracy if low failed
+      if (position == null) {
+        try {
+          position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+            timeLimit: const Duration(seconds: 30),
+          );
+        } catch (e) {
+          debugPrint('getCurrentPosition (medium) failed: $e');
         }
       }
 
@@ -94,10 +106,10 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
         try {
           position = await Geolocator.getPositionStream(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
+              accuracy: LocationAccuracy.low,
               distanceFilter: 0,
             ),
-          ).first.timeout(const Duration(seconds: 20));
+          ).first.timeout(const Duration(seconds: 30));
         } catch (e) {
           debugPrint('getPositionStream failed: $e');
         }
@@ -111,7 +123,7 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
           });
         }
         AppSnackbar.error(
-          'Could not fetch current location. Please open Maps once or move outdoors, then try again.',
+          'Could not fetch current location. Please enable GPS and try again.',
         );
         return;
       }

@@ -880,13 +880,14 @@ Future<void> _onStart(ServiceInstance service) async {
       final elapsedMs = DateTime.now().difference(sendStart).inMilliseconds;
 
       // 401 = token revoked (driver logged in on another device)
-      // Stop sending GPS immediately — this device is no longer authorized.
+      // Stop sending GPS but DON'T delete the token — the API client
+      // handles force-logout and navigates to login screen.
+      // Deleting the token here caused "Session expired" on home screen
+      // before the user could even see the logout prompt.
       if (response.statusCode == 401) {
         TrackingLogger.log('✗ 401    token revoked, stopping service');
-        print('BackgroundLocationService: 401 Unauthorized — '
-            'token revoked (logged in on another device). Stopping.');
+        print('BackgroundLocationService: 401 Unauthorized — stopping GPS service.');
         await prefs.setBool(_serviceRunningKey, false);
-        await prefs.remove(_tokenKey);
         return false;
       }
 
