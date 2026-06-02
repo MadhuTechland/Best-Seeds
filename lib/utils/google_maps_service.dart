@@ -370,12 +370,58 @@ class GoogleMapsService {
 
   /// Reverse geocode coordinates to get neighborhood/area name.
   /// Prefers locality/town names over tiny neighborhoods or hamlets.
-  static Future<String?> reverseGeocode(LatLng location) async {
+  ///
+  /// Pass [routeDistanceKm] (total route length) to get distance-aware naming,
+  /// matching the user app's tracking screen:
+  ///   ==0       → legacy behaviour (unchanged for existing callers)
+  ///   >0, ≤30   → neighborhood / colony names
+  ///   30–200    → sublocality first, falls back to city
+  ///   >200      → city / district names
+  static Future<String?> reverseGeocode(LatLng location,
+      {double routeDistanceKm = 0}) async {
+    // Distance-aware result-type selection. The `==0` bucket keeps the exact
+    // legacy result_type + priority so existing callers are unaffected.
+    final String resultTypes;
+    final List<String> priority;
+    final String bucket;
+    if (routeDistanceKm <= 0) {
+      resultTypes =
+          'locality|administrative_area_level_3|administrative_area_level_2|sublocality_level_1|sublocality|neighborhood';
+      priority = const [
+        'locality',
+        'administrative_area_level_3',
+        'administrative_area_level_2',
+        'sublocality_level_1',
+        'sublocality',
+        'neighborhood',
+      ];
+      bucket = 'd0';
+    } else if (routeDistanceKm > 200) {
+      resultTypes = 'locality|administrative_area_level_2';
+      priority = const ['locality', 'administrative_area_level_2'];
+      bucket = 'dL';
+    } else if (routeDistanceKm > 30) {
+      resultTypes =
+          'sublocality_level_1|sublocality|neighborhood|locality';
+      priority = const [
+        'sublocality_level_1',
+        'sublocality',
+        'neighborhood',
+        'locality',
+      ];
+      bucket = 'dM';
+    } else {
+      resultTypes = 'sublocality_level_1|sublocality|neighborhood';
+      priority = const ['sublocality_level_1', 'sublocality', 'neighborhood'];
+      bucket = 'dS';
+    }
+
     // Round to 3 decimals (~110 m). Two stops within 110 m of each other
     // resolve to the same town anyway, so collapsing them into one cache
-    // key is correct, not a bug.
+    // key is correct, not a bug. The distance [bucket] is part of the key so
+    // the same point requested at different granularities doesn't collide.
     final cacheKey =
-        'rgeocode:${_r3(location.latitude)},${_r3(location.longitude)}';
+        'rgeocode:$bucket:${_r3(location.latitude)},${_r3(location.longitude)}';
     final cached = await _cacheGet(cacheKey);
     if (cached != null && cached.containsKey('name')) {
       return cached['name'] as String?;
@@ -385,7 +431,7 @@ class GoogleMapsService {
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json'
         '?latlng=${location.latitude},${location.longitude}'
-        '&result_type=locality|administrative_area_level_3|administrative_area_level_2|sublocality_level_1|sublocality|neighborhood'
+        '&result_type=$resultTypes'
         '&language=en'
         '&key=$_apiKey',
       );
@@ -398,16 +444,6 @@ class GoogleMapsService {
 
       final results = data['results'] as List;
       if (results.isEmpty) return null;
-
-      // Priority: recognizable town/city > mandal/sub-district > small locality
-      const priority = [
-        'locality',
-        'administrative_area_level_3',
-        'administrative_area_level_2',
-        'sublocality_level_1',
-        'sublocality',
-        'neighborhood',
-      ];
 
       String? resolved;
       for (final type in priority) {
@@ -744,9 +780,14 @@ class GoogleMapsService {
           });
         }
 
-        // Reverse geocode all stops in parallel
+        // Reverse geocode all stops in parallel. Pass the route length so the
+        // name granularity matches the user app — on a short city route this
+        // yields neighborhood names (e.g. "Jubilee Hills") instead of coarse
+        // city names that collapse into one and get deduped away.
+        final double routeDistKm = totalDistanceMeters / 1000.0;
         List<String?> names = await Future.wait(
-          stops.map((s) => reverseGeocode(s['location'] as LatLng)),
+          stops.map((s) => reverseGeocode(s['location'] as LatLng,
+              routeDistanceKm: routeDistKm)),
         );
         for (int i = 0; i < stops.length; i++) {
           stops[i]['name'] = names[i] ?? 'Unknown';
@@ -795,6 +836,7 @@ class GoogleMapsService {
     required double endFraction,
     required int totalDurationSeconds,
     int count = 3,
+    double routeDistanceKm = 0,
   }) async {
     if (fullPolyline.isEmpty || cumulativeDistances.isEmpty) return [];
 
@@ -835,9 +877,14 @@ class GoogleMapsService {
       });
     }
 
-    // Reverse geocode many candidate points, then keep the best ordered localities.
+    // Reverse geocode many candidate points, then keep the best ordered
+    // localities. Pass the route length (fallback to the polyline's own length)
+    // so name granularity matches the user app — short routes resolve to
+    // neighborhoods (e.g. "Jubilee Hills"), not coarse city names.
+    final routeKm = routeDistanceKm > 0 ? routeDistanceKm : totalDist / 1000;
     final names = await Future.wait(
-      candidates.map((s) => reverseGeocode(s['location'] as LatLng)),
+      candidates.map((s) => reverseGeocode(s['location'] as LatLng,
+          routeDistanceKm: routeKm)),
     );
     for (int i = 0; i < candidates.length; i++) {
       candidates[i]['name'] = names[i] ?? 'Unknown';

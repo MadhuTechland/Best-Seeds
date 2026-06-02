@@ -4,7 +4,7 @@ import 'package:bestseeds/employee/models/booking_model.dart';
 import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/screens/edit_hatchery_details_screen.dart';
 import 'package:bestseeds/employee/screens/notification_screen.dart';
-import 'package:bestseeds/employee/screens/vehicle_tracking_map_screen.dart';
+import 'package:bestseeds/employee/screens/vehicle_tracking_v2/vehicle_tracking_map_screen.dart';
 import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
@@ -1603,9 +1603,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                         context,
                         MaterialPageRoute(
                           settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
-                          builder: (context) => VehicleTrackingMapScreen(
+                          builder: (context) => VehicleTrackingMapScreenV2(
                             key: ValueKey('vt-${tapped.bookingId}'),
-                            booking: tapped,
+                            bookingId: tapped.bookingId.toString(),
                           ),
                         ),
                       );

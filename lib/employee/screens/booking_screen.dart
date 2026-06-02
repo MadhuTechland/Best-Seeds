@@ -1,4 +1,4 @@
-import 'package:bestseeds/employee/screens/vehicle_tracking_map_screen.dart';
+import 'package:bestseeds/employee/screens/vehicle_tracking_v2/vehicle_tracking_map_screen.dart';
 import 'package:bestseeds/employee/models/booking_model.dart';
 import 'package:bestseeds/employee/repository/auth_repository.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
@@ -1323,9 +1323,9 @@ class _BookingScreenState extends State<BookingScreen> {
                         context,
                         MaterialPageRoute(
                           settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
-                          builder: (context) => VehicleTrackingMapScreen(
+                          builder: (context) => VehicleTrackingMapScreenV2(
                             key: ValueKey('vt-${tapped.bookingId}'),
-                            booking: tapped,
+                            bookingId: tapped.bookingId.toString(),
                           ),
                         ),
                       );

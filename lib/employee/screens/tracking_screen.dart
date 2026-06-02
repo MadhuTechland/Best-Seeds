@@ -5,7 +5,7 @@ import 'package:bestseeds/utils/app_snackbar.dart';
 import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:flutter/material.dart';
 import 'edit_hatchery_details_screen.dart';
-import 'vehicle_tracking_map_screen.dart';
+import 'vehicle_tracking_v2/vehicle_tracking_map_screen.dart';
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({super.key});
@@ -896,9 +896,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
                       context,
                       MaterialPageRoute(
                         settings: RouteSettings(name: '/tracking/${tapped.bookingId}'),
-                        builder: (context) => VehicleTrackingMapScreen(
+                        builder: (context) => VehicleTrackingMapScreenV2(
                           key: ValueKey('vt-${tapped.bookingId}'),
-                          booking: tapped,
+                          bookingId: tapped.bookingId.toString(),
                         ),
                       ),
                     );

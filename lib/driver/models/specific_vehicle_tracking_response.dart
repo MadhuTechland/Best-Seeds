@@ -58,6 +58,15 @@ class TrackingData {
   // Server-computed intermediate stops — same list across all three apps
   // so customer, employee and admin web always show identical location names.
   final List<Map<String, dynamic>> autoTimelinePoints;
+  final double totalDistanceKm;
+  final double remainingDistanceKm;
+  // Passed stops saved in DB — actual times, permanent history
+  final List<Map<String, dynamic>> passedStops;
+  // Last ~60 GPS breadcrumbs for client-side path drawing and stop detection
+  final List<dynamic> driverBreadcrumbs;
+  // True when driver has marked the booking as delivered (status == 5).
+  final bool isDelivered;
+  final String? deliveredAt;
 
   TrackingData({
     required this.vehicleId,
@@ -76,6 +85,12 @@ class TrackingData {
     this.routeWaypoints = const [],
     this.adminPickup,
     this.autoTimelinePoints = const [],
+    this.totalDistanceKm = 0,
+    this.remainingDistanceKm = 0,
+    this.passedStops = const [],
+    this.driverBreadcrumbs = const [],
+    this.isDelivered = false,
+    this.deliveredAt,
   });
 
   /// Parse from new API format: { "booking": {...}, "timeline": [...], "route_waypoints": [...] }
@@ -102,12 +117,21 @@ class TrackingData {
         lat: double.tryParse(destination['lat']?.toString() ?? '') ?? 0,
         lng: double.tryParse(destination['lng']?.toString() ?? '') ?? 0,
       ),
-      driverLocation: LocationPoint(
-        name: currentLocation['location_name'] ?? '',
-        lat: double.tryParse(currentLocation['lat']?.toString() ?? '') ?? 0,
-        lng: double.tryParse(currentLocation['lng']?.toString() ?? '') ?? 0,
-        updatedAt: currentLocation['updated_at'],
-      ),
+      // Build via fromJson (remapping `location_name` → `name`) so the live
+      // status fields — driver_status, is_moving, location_stale, speed_kmh —
+      // are parsed too. Without these the vendor screen always fell back to
+      // "moving / active", so the live (active) icon and ETA differed from the
+      // user app. Missing fields still default safely.
+      driverLocation: LocationPoint.fromJson({
+        'name': currentLocation['location_name'] ?? '',
+        'lat': double.tryParse(currentLocation['lat']?.toString() ?? '') ?? 0,
+        'lng': double.tryParse(currentLocation['lng']?.toString() ?? '') ?? 0,
+        'updated_at': currentLocation['updated_at'],
+        'driver_status': currentLocation['driver_status'],
+        'is_moving': currentLocation['is_moving'],
+        'location_stale': currentLocation['location_stale'],
+        'speed_kmh': currentLocation['speed_kmh'],
+      }),
       driverDetails: DriverDetails(
         driverName: driver['driver_name'] ?? '',
         driverPhone: driver['driver_mobile'] ?? '',
@@ -129,11 +153,25 @@ class TrackingData {
               ?.map((e) => RouteWaypoint.fromJson(e))
               .toList() ??
           [],
-      adminPickup: null,
+      adminPickup: () {
+        final ap = json['admin_pickup'];
+        if (ap is! Map<String, dynamic>) return null;
+        if (ap['lat'] == null || ap['lng'] == null) return null;
+        return LocationPoint.fromJson(ap);
+      }(),
       autoTimelinePoints: (json['auto_timeline_points'] as List<dynamic>?)
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList() ??
           [],
+      totalDistanceKm: (json['total_distance_km'] as num?)?.toDouble() ?? 0,
+      remainingDistanceKm: (json['remaining_distance_km'] as num?)?.toDouble() ?? 0,
+      passedStops: (json['passed_stops'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
+      driverBreadcrumbs: (json['driver_breadcrumbs'] as List<dynamic>?) ?? [],
+      isDelivered: json['is_delivered'] ?? false,
+      deliveredAt: json['delivered_at']?.toString(),
     );
   }
 
@@ -172,6 +210,15 @@ class TrackingData {
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList() ??
           [],
+      totalDistanceKm: (json['total_distance_km'] as num?)?.toDouble() ?? 0,
+      remainingDistanceKm: (json['remaining_distance_km'] as num?)?.toDouble() ?? 0,
+      passedStops: (json['passed_stops'] as List<dynamic>?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [],
+      driverBreadcrumbs: (json['driver_breadcrumbs'] as List<dynamic>?) ?? [],
+      isDelivered: json['is_delivered'] ?? false,
+      deliveredAt: json['delivered_at']?.toString(),
     );
   }
 
@@ -198,6 +245,8 @@ class LocationPoint {
   final bool isMoving;
   final bool locationStale;
 
+  final double speedKmh;
+
   LocationPoint({
     required this.name,
     required this.lat,
@@ -206,6 +255,7 @@ class LocationPoint {
     this.driverStatus = DriverStatus.moving,
     this.isMoving = true,
     this.locationStale = false,
+    this.speedKmh = 0,
   });
 
   factory LocationPoint.fromJson(Map<String, dynamic> json) {
@@ -226,13 +276,14 @@ class LocationPoint {
       driverStatus:  status,
       isMoving:      json['is_moving'] ?? true,
       locationStale: json['location_stale'] ?? false,
+      speedKmh:      (json['speed_kmh'] ?? 0).toDouble(),
     );
   }
 
   Map<String, dynamic> toJson() => {
     "name": name, "lat": lat, "lng": lng, "updated_at": updatedAt,
     "driver_status": driverStatus.name, "is_moving": isMoving,
-    "location_stale": locationStale,
+    "location_stale": locationStale, "speed_kmh": speedKmh,
   };
 }
 

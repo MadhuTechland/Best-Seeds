@@ -35,6 +35,9 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Typography (match the user app's tracking screen fonts)
+  google_fonts: ^6.3.1
+
   # Google Maps for Flutter
   google_maps_flutter: ^2.5.0
 
