@@ -1052,8 +1052,10 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     List<DriverItem> drivers = [];
     DriverItem? selectedDriver;
 
-    // Add New Driver mode
-    bool isAddNewDriver = false;
+    // Add New Driver mode. When no driver is assigned yet (fresh "Add Driver"),
+    // open directly on the Add-New tab so the vendor can enter a name and an
+    // optional mobile without first landing on the "select a driver" view.
+    bool isAddNewDriver = !isEditing;
     final TextEditingController newDriverNameController = TextEditingController();
     final TextEditingController newDriverMobileController = TextEditingController();
 

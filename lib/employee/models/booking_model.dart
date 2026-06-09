@@ -168,7 +168,11 @@ class BookingDriverDetails {
     );
   }
 
-  bool get isAssigned => mobile.isNotEmpty;
+  // A driver counts as assigned if it has a name, a mobile, or a driver id.
+  // Mobile is optional now (it can be added later), so name-only drivers must
+  // still show as assigned instead of falling back to the "Add Driver" view.
+  bool get isAssigned =>
+      mobile.isNotEmpty || name.isNotEmpty || driverId != null;
 }
 
 class BookingStatus {
