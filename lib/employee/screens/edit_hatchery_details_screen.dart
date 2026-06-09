@@ -1361,7 +1361,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                               _buildBottomSheetTextField(
                                 width,
                                 height,
-                                'Driver Name (Optional)',
+                                'Driver Name *',
                                 newDriverNameController,
                                 'Enter driver name',
                               ),
@@ -1369,9 +1369,9 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                               _buildBottomSheetTextField(
                                 width,
                                 height,
-                                'Driver Mobile *',
+                                'Driver Mobile (Optional)',
                                 newDriverMobileController,
-                                'Enter 10-digit mobile number',
+                                'Enter 10-digit mobile number (can add later)',
                                 TextInputType.phone,
                               ),
                             ],
@@ -1703,11 +1703,16 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                             : () async {
                                 // Validate based on mode
                                 if (isAddNewDriver) {
-                                  if (newDriverMobileController.text.trim().isEmpty) {
-                                    AppSnackbar.error('Please enter driver mobile number');
+                                  // Driver name identifies the driver — required.
+                                  if (newDriverNameController.text.trim().isEmpty) {
+                                    AppSnackbar.error('Please enter driver name');
                                     return;
                                   }
-                                  if (newDriverMobileController.text.trim().length < 10) {
+                                  // Mobile is OPTIONAL — the vendor may not have it yet.
+                                  // It can be added later via edit, which links the booking
+                                  // to the driver's app account. If entered, it must be valid.
+                                  final newMobile = newDriverMobileController.text.trim();
+                                  if (newMobile.isNotEmpty && newMobile.length < 10) {
                                     AppSnackbar.error('Please enter a valid 10-digit mobile number');
                                     return;
                                   }
