@@ -14,7 +14,7 @@ import 'tracking_logger.dart';
 // Must match the constants in background_location_service.dart
 // const String _wmBaseUrl = 'http://192.168.0.104:8000/api/';
 // const String _wmBaseUrl = 'http://192.168.29.111:8000/api/';
-const String _wmBaseUrl = 'https://aqua.bestseed.in/api/';
+const String _wmBaseUrl = 'https://staging.bestseed.in/api/';
 const String _wmLocationEndpoint = 'driver/location/update';
 const String _wmTrackingAlertEndpoint = 'driver/tracking-alert';
 const String _wmTokenKey = 'driver_token';
@@ -308,6 +308,7 @@ Future<void> _sendHeartbeatLocation(SharedPreferences prefs) async {
     String locationName = 'Tracking active';
 
     // Prefer a fresh GPS fix so the heartbeat always reflects current position.
+    String posSource = 'none';
     try {
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
@@ -315,19 +316,26 @@ Future<void> _sendHeartbeatLocation(SharedPreferences prefs) async {
       );
       lat = pos.latitude;
       lng = pos.longitude;
-    } catch (_) {
+      posSource = 'fresh-gps(acc=${pos.accuracy.toStringAsFixed(0)}m)';
+      print('📍 [WM-LOC] Fresh GPS: lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)} acc=${pos.accuracy.toStringAsFixed(0)}m');
+    } catch (e) {
+      print('📍 [WM-LOC] Fresh GPS failed: $e — trying lastKnown');
       // GPS timed out (cold start after OEM kill). Use last known as fallback.
       final lastPos = await Geolocator.getLastKnownPosition();
       if (lastPos != null) {
         lat = lastPos.latitude;
         lng = lastPos.longitude;
+        posSource = 'last-known(acc=${lastPos.accuracy.toStringAsFixed(0)}m)';
+        print('📍 [WM-LOC] LastKnown: lat=${lat.toStringAsFixed(6)} lng=${lng.toStringAsFixed(6)}');
       }
     }
 
     if (lat == null || lng == null) {
-      print('WorkManager: No location available for heartbeat');
+      print('📍 [WM-LOC] ❌ No location available for heartbeat (source=$posSource)');
+      TrackingLogger.log('✗ wm heartbeat — no location available');
       return;
     }
+    print('📍 [WM-LOC] Using $posSource for heartbeat');
 
     // Reverse geocode so the user app shows a real place name, not an
     // internal label like "Heartbeat - fresh GPS".

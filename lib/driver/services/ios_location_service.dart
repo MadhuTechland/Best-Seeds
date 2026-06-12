@@ -12,7 +12,7 @@ import 'tracking_database.dart';
 
 const int _iosTrackingNotifId = 887;
 
-const String _iosBaseUrl = 'https://aqua.bestseed.in/api/';
+const String _iosBaseUrl = 'https://staging.bestseed.in/api/';
 const String _iosTokenKey = 'driver_token';
 const String _iosServiceRunningKey = 'bg_location_service_running';
 
@@ -110,7 +110,11 @@ class IosLocationService {
 
   static Future<void> _onPosition(Position position) async {
     // Reject cell-tower / WiFi positions (accuracy > 100m = not real GPS)
-    if (position.accuracy > 100) return;
+    if (position.accuracy > 100) {
+      print('📍 [iOS-LOC] SKIP — poor accuracy ${position.accuracy.toStringAsFixed(0)}m '
+          'lat=${position.latitude.toStringAsFixed(6)} lng=${position.longitude.toStringAsFixed(6)}');
+      return;
+    }
 
     final now = DateTime.now();
 
@@ -123,6 +127,7 @@ class IosLocationService {
         position.longitude,
       );
       if (moved < 10 && now.difference(_lastSentAt!) < const Duration(seconds: 15)) {
+        print('📍 [iOS-LOC] SKIP — moved ${moved.toStringAsFixed(1)}m < 10m in ${now.difference(_lastSentAt!).inSeconds}s');
         return;
       }
     }
@@ -201,10 +206,17 @@ class IosLocationService {
         return;
       }
 
+      if (response.statusCode == 401) {
+        print('📍 [iOS-LOC] ❌ 401 — token revoked, stopping');
+        await prefs.setBool(_iosServiceRunningKey, false);
+        await stop();
+        return;
+      }
+
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = jsonDecode(response.body);
         if (data['status'] == false) {
-          // Backend ended the journey
+          print('📍 [iOS-LOC] ❌ journey ended by backend');
           await prefs.setBool(_iosServiceRunningKey, false);
           await stop();
           return;
@@ -212,12 +224,15 @@ class IosLocationService {
         _lastSentAt = now;
         _lastSentPosition = position;
         await TrackingDatabase.markAllSent();
-        print('IosLocationService: ✓ '
-            '${position.latitude.toStringAsFixed(6)}, '
-            '${position.longitude.toStringAsFixed(6)} → $locationName');
+        print('📍 [iOS-LOC] ✅ SENT lat=${position.latitude.toStringAsFixed(6)} '
+            'lng=${position.longitude.toStringAsFixed(6)} acc=${position.accuracy.toStringAsFixed(0)}m → $locationName');
+      } else {
+        print('📍 [iOS-LOC] ❌ HTTP ${response.statusCode} lat=${position.latitude.toStringAsFixed(6)} '
+            'lng=${position.longitude.toStringAsFixed(6)}');
       }
     } catch (e) {
-      print('IosLocationService: send error: $e');
+      print('📍 [iOS-LOC] ❌ send error: $e lat=${position.latitude.toStringAsFixed(6)} '
+          'lng=${position.longitude.toStringAsFixed(6)}');
     }
   }
 }

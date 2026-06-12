@@ -23,7 +23,11 @@ List<_GroupedAlert> _groupAlerts(List<TrackingAlert> alerts) {
       final existing = map[key]!;
       map[key] = _GroupedAlert(
         representative: existing.representative,
-        bookingIds: [...existing.bookingIds, alert.bookingId],
+        // Don't add the same booking id twice — show each only once
+        // (e.g. "851, 852" instead of "852, 851, 851, 852").
+        bookingIds: existing.bookingIds.contains(alert.bookingId)
+            ? existing.bookingIds
+            : [...existing.bookingIds, alert.bookingId],
         isRead: existing.isRead && alert.isRead,
       );
     } else {

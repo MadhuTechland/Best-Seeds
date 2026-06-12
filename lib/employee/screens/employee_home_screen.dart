@@ -21,7 +21,25 @@ class EmployeeDashboard extends StatefulWidget {
 }
 
 class _EmployeeDashboardState extends State<EmployeeDashboard> {
-  int selectedTabIndex = 1;
+  /// Home category tabs in display order. Each maps to a backend filter: either
+  /// a grouped `tab` string OR an exact `status` value
+  /// (1=New, 2=Confirmed, 3=Driver Assigned, 4=In Journey, 5=Delivered,
+  /// 6=Failed/Cancelled).
+  /// 'All' applies no filter. Default selection is New Bookings (index 0).
+  static const List<Map<String, dynamic>> _tabDefs = [
+    {'label': 'New Bookings', 'tab': 'new', 'status': null},
+    {'label': 'Current Bookings', 'tab': 'current', 'status': null},
+    {'label': 'In Journey', 'tab': null, 'status': 4},
+    {'label': 'Confirmed', 'tab': null, 'status': 2},
+    {'label': 'Driver Assigned', 'tab': null, 'status': 3},
+    {'label': 'Delivered', 'tab': null, 'status': 5},
+    {'label': 'Failed', 'tab': null, 'status': 6},
+    {'label': 'All', 'tab': null, 'status': null},
+  ];
+  static final int _currentTabIndex =
+      _tabDefs.indexWhere((t) => t['tab'] == 'current');
+
+  int selectedTabIndex = 0;
   final StorageService _storage = StorageService();
   final AuthRepository _repo = AuthRepository();
   User? _user;
@@ -165,6 +183,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     // Tag this load so any in-flight responses from a previous tab are ignored
     final reqId = ++_loadRequestId;
     final requestedTab = _currentTab;
+    final requestedStatus = _currentStatus;
 
     setState(() {
       _isLoading = true;
@@ -176,7 +195,8 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
     // Load cached data first for instant display
     if (isCacheable) {
-      final cached = await _repo.getCachedBookings(requestedTab);
+      final cached =
+          await _repo.getCachedBookings(requestedTab, status: requestedStatus);
       if (reqId != _loadRequestId || !mounted) return;
       if (cached != null && cached.bookings.isNotEmpty) {
         setState(() {
@@ -209,6 +229,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         token,
         page: 1,
         tab: requestedTab,
+        status: requestedStatus,
         search: searchText.isNotEmpty ? searchText : null,
         bookingType: _selectedBookingType,
         vehicleAvailability: _selectedVehicleAvailability,
@@ -244,6 +265,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
     final reqId = _loadRequestId;
     final requestedTab = _currentTab;
+    final requestedStatus = _currentStatus;
 
     setState(() {
       _isLoadingMore = true;
@@ -263,6 +285,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         token,
         page: nextPage,
         tab: requestedTab,
+        status: requestedStatus,
         search: searchText.isNotEmpty ? searchText : null,
         bookingType: _selectedBookingType,
         vehicleAvailability: _selectedVehicleAvailability,
@@ -331,9 +354,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
       closeLoader();
       AppSnackbar.success('Booking accepted successfully');
 
-      // Switch to Current tab and refresh bookings
+      // Accepted booking becomes Confirmed (status 2), which lands under the
+      // "Current Bookings" tab — switch there so the vendor sees the result.
       setState(() {
-        selectedTabIndex = 2;
+        selectedTabIndex = _currentTabIndex;
       });
       _loadBookings();
     } catch (e) {
@@ -502,19 +526,10 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   // Server-side filtered - just return loaded data
   List<Booking> get _filteredBookings => _allBookings;
 
-  // Get tab string for server-side filtering
-  String? get _currentTab {
-    switch (selectedTabIndex) {
-      case 1:
-        return 'new';
-      case 2:
-        return 'current';
-      case 3:
-        return 'past';
-      default:
-        return null; // 'all' = no filter
-    }
-  }
+  // Server-side filter for the selected tab: a grouped `tab` string and/or an
+  // exact `status` value (see [_tabDefs]).
+  String? get _currentTab => _tabDefs[selectedTabIndex]['tab'] as String?;
+  int? get _currentStatus => _tabDefs[selectedTabIndex]['status'] as int?;
 
   bool get _hasActiveFilters =>
       _selectedBookingType != null || _selectedVehicleAvailability != null;
@@ -1048,11 +1063,21 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   }
 
   Widget _buildTabBar(double width, double height) {
+    // Counts come from the backend only for New Bookings and All; the exact
+    // status tabs (In Journey / Driver Assigned / Delivered / Failed) have no
+    // backend count, so they show no badge.
     final tabs = [
-      {'label': 'All', 'count': _allCount > 0 ? _allCount : null},
-      {'label': 'New Bookings', 'count': _newCount > 0 ? _newCount : null},
-      {'label': 'Current', 'count': _currentCount > 0 ? _currentCount : null},
-      {'label': 'Past', 'count': _pastCount > 0 ? _pastCount : null},
+      for (final def in _tabDefs)
+        {
+          'label': def['label'],
+          'count': def['tab'] == 'new'
+              ? (_newCount > 0 ? _newCount : null)
+              : def['tab'] == 'current'
+                  ? (_currentCount > 0 ? _currentCount : null)
+                  : def['label'] == 'All'
+                      ? (_allCount > 0 ? _allCount : null)
+                      : null,
+        },
     ];
 
     return Container(

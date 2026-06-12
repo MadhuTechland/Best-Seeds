@@ -82,12 +82,14 @@ class AuthService {
     required String token,
     int page = 1,
     String? tab,
+    int? status,
     String? search,
     String? bookingType,
     String? vehicleAvailability,
   }) {
     final params = <String, String>{'page': '$page'};
     if (tab != null) params['tab'] = tab;
+    if (status != null) params['status'] = '$status';
     if (search != null && search.isNotEmpty) params['search'] = search;
     if (bookingType != null) params['booking_type'] = bookingType;
     if (vehicleAvailability != null) params['vehicle_availability'] = vehicleAvailability;

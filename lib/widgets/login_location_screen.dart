@@ -1,9 +1,17 @@
-import 'package:bestseeds/driver/widgets/driver_location_permission.dart';
+import 'dart:async';
+
 import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
+
+/// Why a location fetch failed — drives which recovery action we offer.
+enum _LocErrorKind {
+  serviceDisabled, // GPS / location services are off
+  permissionDenied, // permission not granted (we re-ask via native dialog)
+  failed, // permission + service OK, but no fix could be obtained
+}
 
 /// Screen shown after login to select/confirm user location
 /// Used by both Driver and Employee login flows
@@ -21,115 +29,129 @@ class LoginLocationScreen extends StatefulWidget {
   State<LoginLocationScreen> createState() => _LoginLocationScreenState();
 }
 
-class _LoginLocationScreenState extends State<LoginLocationScreen> {
+class _LoginLocationScreenState extends State<LoginLocationScreen>
+    with WidgetsBindingObserver {
   bool _isLoading = false;
   bool _isContinuing = false;
   LocationData? _selectedLocation;
-  String? _locationError;
+
+  // Re-entrancy guard: a fetch is currently running. Prevents overlapping
+  // attempts (e.g. an app-resume firing while we're still awaiting GPS), which
+  // would otherwise stack native permission popups / dialogs.
+  bool _fetching = false;
+  // A recovery dialog is on screen — never show a second one on top of it.
+  bool _recoveryPromptOpen = false;
 
   @override
   void initState() {
     super.initState();
-    // Auto-fetch current location on screen load
+    WidgetsBinding.instance.addObserver(this);
+    // Auto-fetch current location on screen load (first time may prompt).
     _getCurrentLocation();
   }
 
-  Future<void> _getCurrentLocation() async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When the user comes back from the system Location / App-settings screen
+    // (where they may have granted permission or switched GPS on), retry
+    // automatically so they don't have to tap anything. This retry is SILENT
+    // (prompt: false): it never re-requests permission or re-opens a dialog, so
+    // returning without fixing anything won't spam popups.
+    if (state == AppLifecycleState.resumed &&
+        _selectedLocation == null &&
+        !_fetching &&
+        !_recoveryPromptOpen) {
+      _getCurrentLocation(prompt: false);
+    }
+  }
+
+  /// [prompt] = true means this attempt may ask the user (native permission
+  /// request + recovery dialogs). Silent retries (app resume) pass false so we
+  /// only re-check state without showing anything new.
+  Future<void> _getCurrentLocation({bool prompt = true}) async {
+    if (_fetching) return; // ignore overlapping calls
+    _fetching = true;
+    debugPrint('📍 [LOGIN-LOC] _getCurrentLocation started (prompt=$prompt)');
+    if (!mounted) {
+      _fetching = false;
+      return;
+    }
     setState(() {
       _isLoading = true;
-      _locationError = null;
     });
 
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      // 1) Is GPS / location service ON? Guard with a short timeout so a slow
+      //    platform call (some OPPO/MediaTek ROMs are slow here) can never
+      //    freeze the screen. If we can't tell in time, assume it's on and let
+      //    the position fetch below surface the real problem.
+      bool serviceEnabled = true;
+      try {
+        serviceEnabled = await Geolocator.isLocationServiceEnabled()
+            .timeout(const Duration(seconds: 3), onTimeout: () => true);
+      } catch (_) {
+        serviceEnabled = true;
+      }
+      debugPrint('📍 [LOGIN-LOC] serviceEnabled=$serviceEnabled');
       if (!serviceEnabled) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-            _locationError = 'Location service is off';
-          });
-        }
+        _setError(_LocErrorKind.serviceDisabled, prompt: prompt);
         return;
       }
 
-      // Check location permission
+      // 2) Permission. When it isn't granted we show the NATIVE OS permission
+      //    dialog (never a redirect to app settings). The native request is
+      //    gated on [prompt]; a silent retry just re-reads the current state.
       LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          if (mounted) {
-            setState(() {
-              _isLoading = false;
-              _locationError = 'Location permission denied';
-            });
-          }
+      debugPrint('📍 [LOGIN-LOC] permission=$permission');
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!prompt) {
+          _setError(_LocErrorKind.permissionDenied, prompt: false);
           return;
         }
+        permission = await Geolocator.requestPermission();
+        debugPrint('📍 [LOGIN-LOC] after request: permission=$permission');
       }
-
-      if (permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-            _locationError = 'Location permission denied forever';
-          });
-        }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _setError(_LocErrorKind.permissionDenied, prompt: prompt);
         return;
       }
+      debugPrint('📍 [LOGIN-LOC] permission OK, fetching position...');
 
-      Position? position = await Geolocator.getLastKnownPosition();
-
-      if (position == null) {
-        try {
-          position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.low,
-            timeLimit: const Duration(seconds: 30),
-          );
-        } catch (e) {
-          debugPrint('getCurrentPosition (low) failed: $e');
-        }
-      }
-
-      // Retry with medium accuracy if low failed
-      if (position == null) {
-        try {
-          position = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.medium,
-            timeLimit: const Duration(seconds: 30),
-          );
-        } catch (e) {
-          debugPrint('getCurrentPosition (medium) failed: $e');
-        }
-      }
-
-      if (position == null) {
-        try {
-          position = await Geolocator.getPositionStream(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.low,
-              distanceFilter: 0,
-            ),
-          ).first.timeout(const Duration(seconds: 30));
-        } catch (e) {
-          debugPrint('getPositionStream failed: $e');
-        }
-      }
-
-      if (position == null) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-            _locationError = 'Could not fetch current location';
-          });
-        }
-        AppSnackbar.error(
-          'Could not fetch current location. Please enable GPS and try again.',
+      // 3) One bounded live fix + an instant last-known fallback. The old code
+      //    chained several 15s attempts, so a weak signal could leave the
+      //    screen "stuck" for up to a minute. This caps the wait at ~12s.
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 12),
         );
+        debugPrint('📍 [LOGIN-LOC] live fix ✅ '
+            'lat=${position.latitude}, lng=${position.longitude}');
+      } on LocationServiceDisabledException {
+        _setError(_LocErrorKind.serviceDisabled, prompt: prompt);
+        return;
+      } catch (e) {
+        debugPrint('📍 [LOGIN-LOC] live fix failed: $e — trying last known');
+      }
+
+      position ??= await _safeLastKnown();
+
+      if (position == null) {
+        debugPrint('📍 [LOGIN-LOC] ❌ no position available');
+        _setError(_LocErrorKind.failed, prompt: prompt);
         return;
       }
 
       final currentPosition = position;
-
       if (!mounted) return;
       setState(() {
         _selectedLocation = LocationData(
@@ -139,14 +161,13 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
               'Lat: ${currentPosition.latitude.toStringAsFixed(4)}, Lng: ${currentPosition.longitude.toStringAsFixed(4)}',
         );
         _isLoading = false;
-        _locationError = null;
       });
 
+      // Reverse-geocode for a friendly address (best-effort; never blocks).
       final address = await _getAddressFromCoordinates(
         currentPosition.latitude,
         currentPosition.longitude,
       );
-
       if (!mounted) return;
       setState(() {
         _selectedLocation = LocationData(
@@ -156,14 +177,109 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
         );
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _locationError = 'Failed to get location';
-      });
       debugPrint('Error getting location: $e');
-      AppSnackbar.error('Failed to get location. Please check GPS and try again.');
+      _setError(_LocErrorKind.failed, prompt: prompt);
+    } finally {
+      _fetching = false;
     }
+  }
+
+  /// Last-known position with a timeout guard — on some devices the platform
+  /// call can hang, so we never await it unbounded.
+  Future<Position?> _safeLastKnown() async {
+    try {
+      return await Geolocator.getLastKnownPosition()
+          .timeout(const Duration(seconds: 4), onTimeout: () => null);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _setError(_LocErrorKind kind, {bool prompt = true}) {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+    });
+    // Only the user-initiated attempts (screen open / button tap) surface a
+    // recovery popup. Silent resume retries stay quiet so nothing repeats.
+    if (prompt) _handleScenario(kind);
+  }
+
+  /// Open the system GPS / location-services screen. On return, the lifecycle
+  /// observer re-fetches automatically.
+  Future<void> _openLocationSettings() async {
+    try {
+      await Geolocator.openLocationSettings();
+    } catch (e) {
+      debugPrint('openLocationSettings failed: $e');
+      AppSnackbar.error('Could not open location settings.');
+    }
+  }
+
+  /// Simple, per-scenario recovery — no big error card on screen. When the
+  /// fetch can't complete we show a small popup (or native re-request) that
+  /// matches the cause, then the lifecycle observer auto-retries on return.
+  Future<void> _handleScenario(_LocErrorKind kind) async {
+    // Never stack a second popup on top of one already showing.
+    if (_recoveryPromptOpen) return;
+    _recoveryPromptOpen = true;
+    try {
+      switch (kind) {
+        case _LocErrorKind.serviceDisabled:
+          // GPS is off — small popup that takes the user to turn it on.
+          final go = await _confirmDialog(
+            title: 'Turn on location',
+            message: 'Please turn on your device location (GPS) to continue.',
+            actionText: 'Turn On',
+          );
+          if (go) await _openLocationSettings();
+          break;
+        case _LocErrorKind.permissionDenied:
+          // The native permission popup was already shown and dismissed —
+          // no settings redirect, just a reminder.
+          AppSnackbar.error('Location permission is required to continue.');
+          break;
+        case _LocErrorKind.failed:
+          AppSnackbar.error('Could not get your location. Please try again.');
+          break;
+      }
+    } finally {
+      _recoveryPromptOpen = false;
+    }
+  }
+
+  /// Minimal yes/no dialog. Returns true if the action button was tapped.
+  Future<bool> _confirmDialog({
+    required String title,
+    required String message,
+    required String actionText,
+  }) async {
+    if (!mounted) return false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text(title,
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0077C8),
+              foregroundColor: Colors.white,
+            ),
+            child: Text(actionText),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   Future<String> _getAddressFromCoordinates(double lat, double lng) async {
@@ -189,20 +305,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
     return 'Lat: ${lat.toStringAsFixed(4)}, Lng: ${lng.toStringAsFixed(4)}';
   }
 
-  void _selectFromMap() async {
-    final result = await LocationSelector.show(
-      context: context,
-      initialLatitude: _selectedLocation?.latitude,
-      initialLongitude: _selectedLocation?.longitude,
-    );
-
-    if (result != null) {
-      setState(() {
-        _selectedLocation = result;
-      });
-    }
-  }
-
   Future<void> _confirmLocation() async {
     if (_selectedLocation == null || _isContinuing) return;
 
@@ -226,8 +328,7 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
     final width = MediaQuery.of(context).size.width;
     final height = MediaQuery.of(context).size.height;
 
-    return DriverLocationGuard(
-      child: Scaffold(
+    return Scaffold(
       body: SingleChildScrollView(
         child: Container(
           width: width,
@@ -341,49 +442,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
                                 style: TextStyle(
                                   fontSize: width * 0.04,
                                   color: Colors.grey.shade600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      else if (_locationError != null && _selectedLocation == null)
-                        Container(
-                          width: double.infinity,
-                          padding: EdgeInsets.all(width * 0.04),
-                          margin: EdgeInsets.only(bottom: height * 0.02),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange.shade200),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.location_searching,
-                                    color: Colors.orange.shade800,
-                                  ),
-                                  SizedBox(width: width * 0.02),
-                                  Expanded(
-                                    child: Text(
-                                      'We could not detect your current GPS location.',
-                                      style: TextStyle(
-                                        fontSize: width * 0.038,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.orange.shade900,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: height * 0.01),
-                              Text(
-                                'You can try again or choose your location from the map.',
-                                style: TextStyle(
-                                  fontSize: width * 0.035,
-                                  color: Colors.orange.shade900,
                                 ),
                               ),
                             ],
@@ -507,7 +565,6 @@ class _LoginLocationScreenState extends State<LoginLocationScreen> {
             ),
           ),
         ),
-      ),
       ),
     );
   }

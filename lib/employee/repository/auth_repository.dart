@@ -79,6 +79,7 @@ class AuthRepository {
     String token, {
     int page = 1,
     String? tab,
+    int? status,
     String? search,
     String? bookingType,
     String? vehicleAvailability,
@@ -87,6 +88,7 @@ class AuthRepository {
       token: token,
       page: page,
       tab: tab,
+      status: status,
       search: search,
       bookingType: bookingType,
       vehicleAvailability: vehicleAvailability,
@@ -98,16 +100,21 @@ class AuthRepository {
         bookingType == null &&
         vehicleAvailability == null;
     if (isCacheable) {
-      _cache.cacheBookings(tab, res);
+      _cache.cacheBookings(_cacheKey(tab, status), res);
     }
 
     return BookingsResponse.fromJson(res);
   }
 
   /// Load bookings from local SQLite cache
-  Future<BookingsResponse?> getCachedBookings(String? tab) async {
-    return _cache.getCachedBookings(tab);
+  Future<BookingsResponse?> getCachedBookings(String? tab, {int? status}) async {
+    return _cache.getCachedBookings(_cacheKey(tab, status));
   }
+
+  /// Distinct cache key per filter: grouped `tab` OR an exact `status` value,
+  /// so status-filtered tabs don't collide on the null-tab cache slot.
+  String? _cacheKey(String? tab, int? status) =>
+      tab ?? (status != null ? 'status_$status' : null);
 
   /// Fetch fresh tracking data for a single booking
   Future<Booking> getBookingTracking({

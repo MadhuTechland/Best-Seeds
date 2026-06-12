@@ -17,12 +17,16 @@ enum DriverLocationCheckResult {
 
 class DriverLocationPermissionService {
   static Future<DriverLocationCheckResult> check() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      return DriverLocationCheckResult.serviceDisabled;
-    }
+    // SKIP isLocationServiceEnabled entirely — it hangs forever on OPPO/MediaTek.
+    // Even .timeout() doesn't help — the Dart Future never completes.
+    // Just check permission. If GPS is off, getCurrentPosition will fail later.
+    debugPrint('📍 [DRIVER-LOC] check() — checking permission only (skip service check)...');
+
     var permission = await Geolocator.checkPermission();
+    debugPrint('📍 [DRIVER-LOC] permission=$permission');
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
+      debugPrint('📍 [DRIVER-LOC] after request: permission=$permission');
     }
     if (permission == LocationPermission.deniedForever) {
       return DriverLocationCheckResult.permissionDeniedForever;
@@ -30,6 +34,7 @@ class DriverLocationPermissionService {
     if (permission == LocationPermission.denied) {
       return DriverLocationCheckResult.permissionDenied;
     }
+    debugPrint('📍 [DRIVER-LOC] ✅ granted');
     return DriverLocationCheckResult.granted;
   }
 

@@ -25,7 +25,7 @@ import 'tracking_work_manager.dart';
 // const String _baseUrl =
 //     'http://192.168.29.111:8000/api/';
 const String _baseUrl =
-    'https://aqua.bestseed.in/api/';
+    'https://staging.bestseed.in/api/';
 const String _locationUpdateEndpoint = 'driver/location/update';
 const String _trackingAlertEndpoint = 'driver/tracking-alert';
 const String _googleApiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
@@ -187,29 +187,75 @@ class BackgroundLocationService {
   }
 
   /// Restart the service if it should be running but was killed.
-  /// Call this from splash screen or driver home screen on app startup.
+  /// Also detects "zombie" state: service process alive but Dart isolate
+  /// dead (e.g. after hot restart) — no location sent in 90s despite
+  /// isRunning()=true means the isolate is dead.
   static Future<void> restartIfNeeded() async {
     final shouldRun = await shouldBeRunning();
-    final running = await isRunning();
-    if (!shouldRun || running) return;
+    if (!shouldRun) {
+      print('📍 [RESTART] shouldRun=false — no active journey, skipping');
+      return;
+    }
 
+    final running = await isRunning();
+    print('📍 [RESTART] shouldRun=true, isRunning=$running');
+
+    if (running) {
+      // Service reports "running" — but is it ACTUALLY sending?
+      // After hot restart, Android service process stays alive but the
+      // Dart isolate (stream, timers, watchdog) is dead. Detect this
+      // zombie state by checking last_location_sent_at timestamp.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final lastSentMs = prefs.getInt('last_location_sent_at') ?? 0;
+      final lastSentAge = DateTime.now().millisecondsSinceEpoch - lastSentMs;
+      final lastSentAgeSec = lastSentAge ~/ 1000;
+
+      if (lastSentMs > 0 && lastSentAgeSec < 90) {
+        // Location was sent recently — service is genuinely alive
+        print('📍 [RESTART] Service alive — last sent ${lastSentAgeSec}s ago, OK');
+        return;
+      }
+
+      // Service "running" but no recent send — zombie state.
+      // Force stop + restart to get a fresh Dart isolate.
+      print('📍 [RESTART] ⚠️ ZOMBIE detected — service "running" but last sent ${lastSentAgeSec}s ago. Force restarting...');
+      TrackingLogger.log('⚠ zombie service detected — last sent ${lastSentAgeSec}s ago, force restarting');
+
+      if (Platform.isIOS) {
+        await IosLocationService.stop();
+        await Future.delayed(const Duration(milliseconds: 500));
+        await IosLocationService.start();
+        print('📍 [RESTART] iOS service force-restarted');
+        return;
+      }
+
+      // Android: stop the zombie service, wait, then start fresh
+      try {
+        _service.invoke('stopService');
+        await Future.delayed(const Duration(seconds: 2));
+      } catch (_) {}
+    }
+
+    // Service is NOT running (or was just stopped) — start it
     if (Platform.isIOS) {
-      print('BackgroundLocationService: iOS stream not active, restarting...');
+      print('📍 [RESTART] Starting iOS location stream...');
       await IosLocationService.start();
       return;
     }
 
-    print('BackgroundLocationService: Service was killed, restarting...');
+    print('📍 [RESTART] Starting Android foreground service...');
     await _prepareAndroidBackgroundExecution();
     await _service.startService();
     await Future.delayed(const Duration(seconds: 2));
     final nowRunning = await isRunning();
     if (!nowRunning) {
-      print('BackgroundLocationService: Restart failed, retrying...');
+      print('📍 [RESTART] First start failed, retrying...');
       await _service.startService();
     }
     await registerGuardianTask();
     await registerActiveCaptureTask();
+    print('📍 [RESTART] ✅ Service + WorkManager tasks started');
   }
 
   static Future<void> _prepareAndroidBackgroundExecution() async {
@@ -787,12 +833,15 @@ Future<void> _onStart(ServiceInstance service) async {
       return false;
     }
 
+    // Reload prefs to pick up latest token written by main isolate
+    await prefs.reload();
     final token = prefs.getString(_tokenKey);
     if (token == null || token.isEmpty) {
       print('BackgroundLocationService: No token found, stopping.');
       await prefs.setBool(_serviceRunningKey, false);
       return false;
     }
+    print('📍 [LOC-TOKEN] Using token: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
 
     if (!shouldSendPosition(position)) {
       // Position didn't meet the send-throttle gate (too close to the
@@ -875,7 +924,16 @@ Future<void> _onStart(ServiceInstance service) async {
         }),
       ).timeout(const Duration(seconds: 12));
 
-      print('📍 [LOC-SEND] status=${response.statusCode} lat=${position.latitude} lng=${position.longitude} acc=${position.accuracy.toStringAsFixed(1)}m body=${response.body}');
+      // Parse saved_to_db from response to show if point was saved or filtered
+      String dbStatus = '';
+      try {
+        final respData = jsonDecode(response.body);
+        final saved = respData['saved_to_db'] == true;
+        dbStatus = saved ? '💾 DB_SAVED' : '⏭ DB_FILTERED';
+      } catch (_) {
+        dbStatus = '❓ DB_UNKNOWN';
+      }
+      print('📍 [LOC-SEND] $dbStatus status=${response.statusCode} lat=${position.latitude} lng=${position.longitude} acc=${position.accuracy.toStringAsFixed(1)}m');
 
       final elapsedMs = DateTime.now().difference(sendStart).inMilliseconds;
 

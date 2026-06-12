@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -78,27 +77,17 @@ class CustomMarkerHelperV2 {
     try {
       final ByteData data =
           await rootBundle.load('assets/images/delivery_truck.png');
+      // delivery_truck.png is a top-down/rear truck already facing north (up)
+      // at 0°, so NO baked-in rotation is applied — the Marker's [rotation]
+      // handles heading. Scale by width only so the truck keeps its aspect
+      // ratio (forcing targetHeight too would squish the tall image).
       final ui.Codec codec = await ui.instantiateImageCodec(
         data.buffer.asUint8List(),
         targetWidth: size,
-        targetHeight: size,
       );
       final ui.FrameInfo frameInfo = await codec.getNextFrame();
-      final ui.Image srcImage = frameInfo.image;
-
-      // Rotate 180°: asset faces toward viewer (south), needs to face north.
-      final ui.PictureRecorder recorder = ui.PictureRecorder();
-      final Canvas canvas = Canvas(recorder);
-      final double s = size.toDouble();
-      canvas.translate(s / 2, s / 2);
-      canvas.rotate(math.pi); // 180°
-      canvas.translate(-s / 2, -s / 2);
-      canvas.drawImage(srcImage, Offset.zero, Paint());
-      final ui.Picture picture = recorder.endRecording();
-      final ui.Image rotatedImage = await picture.toImage(size, size);
-
       final ByteData? byteData =
-          await rotatedImage.toByteData(format: ui.ImageByteFormat.png);
+          await frameInfo.image.toByteData(format: ui.ImageByteFormat.png);
 
       if (byteData != null) {
         return BitmapDescriptor.bytes(byteData.buffer.asUint8List());

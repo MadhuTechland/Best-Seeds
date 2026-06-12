@@ -195,6 +195,9 @@ class _EmployeeLoginScreenState extends State<EmployeeLoginScreen> {
                               controller: passCtrl,
                               keyboardType: TextInputType.text,
                               obscureText: _obscurePassword,
+                              // Center the hint/text vertically — without this the
+                              // suffix eye icon pushes the text to the top.
+                              textAlignVertical: TextAlignVertical.center,
                               decoration: InputDecoration(
                                 hintText: 'Enter Password',
                                 border: InputBorder.none,

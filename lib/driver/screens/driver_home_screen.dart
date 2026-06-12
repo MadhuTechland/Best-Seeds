@@ -168,15 +168,95 @@ class _DriverDashboardState extends State<DriverDashboard>
 
   /// If there was an active journey (e.g. app was killed/cleared during delivery),
   /// restart the background location service and switch to the Live tab.
+  /// Also handles zombie state (service alive but isolate dead after hot restart).
   Future<void> _checkActiveJourney() async {
-    // First, restart the service if it was killed but should still be running
-    await BackgroundLocationService.restartIfNeeded();
+    debugPrint('📍 [HOME] ═══════════════════════════════════════');
+    debugPrint('📍 [HOME] TRACKING STATUS CHECK');
+    debugPrint('📍 [HOME] ═══════════════════════════════════════');
+
+    final shouldRun = await BackgroundLocationService.shouldBeRunning();
+    final runningBefore = await BackgroundLocationService.isRunning();
+
+    // Check last sent timestamp
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final lastSentMs = prefs.getInt('last_location_sent_at') ?? 0;
+    final lastSentAgeSec = lastSentMs > 0
+        ? (DateTime.now().millisecondsSinceEpoch - lastSentMs) ~/ 1000
+        : -1;
+
+    debugPrint('📍 [HOME] shouldRun=$shouldRun');
+    debugPrint('📍 [HOME] isRunning=$runningBefore');
+    debugPrint('📍 [HOME] lastSentAge=${lastSentAgeSec == -1 ? "NEVER" : "${lastSentAgeSec}s ago"}');
+
+    if (shouldRun) {
+      debugPrint('📍 [HOME] 🟡 Journey is ACTIVE — ensuring tracking is alive...');
+      // Refresh token so background isolate has the latest
+      final currentToken = _storage.getToken();
+      if (currentToken != null && currentToken.isNotEmpty) {
+        final sp = await SharedPreferences.getInstance();
+        await sp.setString('driver_token', currentToken);
+      }
+      await BackgroundLocationService.restartIfNeeded();
+      final runningAfter = await BackgroundLocationService.isRunning();
+      if (runningAfter) {
+        debugPrint('📍 [HOME] ✅ TRACKING IS ON — service running, lat/lng being sent');
+      } else {
+        debugPrint('📍 [HOME] ❌ TRACKING FAILED TO START — service not running after restart attempt');
+      }
+    } else {
+      debugPrint('📍 [HOME] ⚪ TRACKING IS OFF — no active journey');
+    }
+
+    debugPrint('📍 [HOME] ═══════════════════════════════════════');
 
     final running = await BackgroundLocationService.isRunning();
     if (running && mounted) {
       setState(() {
         selectedTabIndex = 1; // Live tab
       });
+    }
+  }
+
+  /// Called after bookings API confirms live journeys exist.
+  /// If tracking flag is off (SharedPreferences lost/cleared), force-start it.
+  /// Also refreshes the token in SharedPreferences so the background isolate
+  /// picks up the latest valid token (prevents 401 after hot restart/token refresh).
+  Future<void> _ensureTrackingForLiveJourney() async {
+    final shouldRun = await BackgroundLocationService.shouldBeRunning();
+    if (shouldRun) return; // already flagged, _checkActiveJourney handles it
+
+    debugPrint('📍 [HOME] ⚠️ Backend has LIVE journey but tracking flag is OFF — force-starting tracking');
+
+    // Refresh the token in SharedPreferences so background isolate gets the latest
+    final currentToken = _storage.getToken();
+    if (currentToken != null && currentToken.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      final storedToken = prefs.getString('driver_token');
+      if (storedToken != currentToken) {
+        await prefs.setString('driver_token', currentToken);
+        debugPrint('📍 [HOME] Token refreshed in SharedPreferences (was stale)');
+      }
+      // Set the flag so restartIfNeeded knows to keep it alive
+      await prefs.setBool('bg_location_service_running', true);
+    } else {
+      debugPrint('📍 [HOME] ❌ No token available — cannot start tracking');
+      return;
+    }
+
+    // Now start the service
+    await BackgroundLocationService.restartIfNeeded();
+
+    final running = await BackgroundLocationService.isRunning();
+    if (running) {
+      debugPrint('📍 [HOME] ✅ Tracking auto-started for live journey');
+      if (mounted) {
+        setState(() {
+          selectedTabIndex = 1; // Live tab
+        });
+      }
+    } else {
+      debugPrint('📍 [HOME] ❌ Failed to auto-start tracking');
     }
   }
 
@@ -229,9 +309,15 @@ class _DriverDashboardState extends State<DriverDashboard>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    // When the app comes back to foreground, restart the location service
-    // if it was killed by an aggressive OEM battery optimizer.
     if (state == AppLifecycleState.resumed) {
+      debugPrint('📍 [HOME] App RESUMED — refreshing token + checking tracking...');
+      // Refresh token so background isolate always has the latest
+      final currentToken = _storage.getToken();
+      if (currentToken != null && currentToken.isNotEmpty) {
+        SharedPreferences.getInstance().then((sp) {
+          sp.setString('driver_token', currentToken);
+        });
+      }
       BackgroundLocationService.restartIfNeeded();
     }
   }
@@ -281,6 +367,12 @@ class _DriverDashboardState extends State<DriverDashboard>
           _filterRoutes();
           _isLoading = false;
         });
+
+        // If backend has live journeys but tracking is off, auto-start it.
+        // This catches: hot restart, app data cleared, flag lost, etc.
+        if (response.counts.live > 0) {
+          _ensureTrackingForLiveJourney();
+        }
       }
     } catch (e) {
       if (mounted) {

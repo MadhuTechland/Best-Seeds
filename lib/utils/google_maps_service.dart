@@ -723,9 +723,17 @@ class GoogleMapsService {
         }
         remainingSeconds = totalDurationSeconds;
       } else {
-        // No driver position, no waypoints — single leg, full route as remaining
-        final encodedPolyline = route['overview_polyline']['points'] as String;
-        remainingPoints = _decodePolyline(encodedPolyline);
+        // No driver position, no waypoints — single leg, full route as remaining.
+        // Decode per-STEP polylines (full road geometry) instead of the
+        // overview_polyline, which is Douglas–Peucker-simplified and collapses
+        // curves into straight chords — the "part of the route shows a straight
+        // line" bug. Fall back to overview only if steps are somehow empty.
+        remainingPoints = _decodeStepsPolyline(legs[0]['steps'] as List);
+        if (remainingPoints.isEmpty) {
+          final encodedPolyline =
+              route['overview_polyline']['points'] as String;
+          remainingPoints = _decodePolyline(encodedPolyline);
+        }
         totalDurationSeconds = legs[0]['duration']['value'] as int;
         totalDistanceMeters = legs[0]['distance']['value'] as int;
         remainingSeconds = totalDurationSeconds;
