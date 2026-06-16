@@ -443,6 +443,26 @@ class AuthService {
     );
   }
 
+  /// Sync the driver's device permission status (location + battery
+  /// optimization) so the admin panel can see it. Either field is optional.
+  Future<Map<String, dynamic>> updateDriverPermissions({
+    required String token,
+    bool? locationPermission,
+    bool? batteryOptimizationDisabled,
+  }) async {
+    return await _apiClient.request(
+      url: AppConstants.baseUrl + AppConstants.driverUpdatePermissionsApi,
+      method: 'POST',
+      token: token,
+      body: {
+        if (locationPermission != null)
+          'location_permission': locationPermission,
+        if (batteryOptimizationDisabled != null)
+          'battery_optimization_disabled': batteryOptimizationDisabled,
+      },
+    );
+  }
+
   Future<Map<String, dynamic>> updateEmployeeCurrentLocation({
     required String token,
     required double latitude,

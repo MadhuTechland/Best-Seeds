@@ -39,6 +39,7 @@ class AppConstants {
   static String driverUpdateDropStatusApi = "driver/update-drop-status";
   static String driverLocationUpdateApi = "driver/location/update";
   static String driverUpdateCurrentLocationApi = "driver/update-location";
+  static String driverUpdatePermissionsApi = "driver/update-permissions";
   static String driverTrackingAlertApi = "driver/tracking-alert";
   static String vendorTrackingAlertStatusApi = "vendor/tracking-alert-status";
   static String vendorTrackingAlertsMarkReadApi = "vendor/tracking-alerts/mark-read";

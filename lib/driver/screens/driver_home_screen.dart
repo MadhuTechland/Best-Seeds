@@ -268,16 +268,23 @@ class _DriverDashboardState extends State<DriverDashboard>
   }
 
   Future<void> _pickLocation() async {
-    // Open the full-screen map picker straight away — same UX as the
-    // customer app's location header (no intermediate bottom sheet).
-    final result = await Navigator.of(context).push<LocationData>(
-      MaterialPageRoute(
-        builder: (_) => LocationPickerScreen(
-          initialLatitude: _storage.getLocationLat(),
-          initialLongitude: _storage.getLocationLng(),
-        ),
-      ),
+    // Map selection disabled — use current GPS location only. The bottom sheet
+    // now shows just the "Use Current Location" option (the map option is
+    // commented out in LocationSelector).
+    final result = await LocationSelector.show(
+      context: context,
+      initialLatitude: _storage.getLocationLat(),
+      initialLongitude: _storage.getLocationLng(),
     );
+    // Previously opened the full-screen map picker directly:
+    // final result = await Navigator.of(context).push<LocationData>(
+    //   MaterialPageRoute(
+    //     builder: (_) => LocationPickerScreen(
+    //       initialLatitude: _storage.getLocationLat(),
+    //       initialLongitude: _storage.getLocationLng(),
+    //     ),
+    //   ),
+    // );
     if (result == null || !mounted) return;
 
     await _storage.saveLocation(

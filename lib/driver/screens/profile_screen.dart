@@ -1,4 +1,5 @@
 import 'package:bestseeds/driver/controllers/profile_controller.dart';
+import 'package:bestseeds/driver/widgets/driver_permissions_section.dart';
 import 'package:bestseeds/employee/screens/help_screen.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/screens/privacy_policy_screen.dart';
@@ -30,6 +31,10 @@ class DriverProfileScreen extends StatelessWidget {
               child: SingleChildScrollView(
                 child: Column(
                   children: [
+                    // Device permission toggles (Location + Background battery),
+                    // reflecting real OS state and synced to the admin panel.
+                    const DriverPermissionsSection(),
+                    SizedBox(height: height * 0.01),
                     ProfileMenuItem(
                       icon: Icons.notifications_outlined,
                       title: 'Notification',

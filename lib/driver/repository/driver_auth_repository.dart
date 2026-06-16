@@ -114,4 +114,17 @@ class DriverAuthRepository {
       address: address,
     );
   }
+
+  /// Sync device permission status (location + battery) to the backend.
+  Future<Map<String, dynamic>> updatePermissions({
+    required String token,
+    bool? locationPermission,
+    bool? batteryOptimizationDisabled,
+  }) async {
+    return await _service.updateDriverPermissions(
+      token: token,
+      locationPermission: locationPermission,
+      batteryOptimizationDisabled: batteryOptimizationDisabled,
+    );
+  }
 }
