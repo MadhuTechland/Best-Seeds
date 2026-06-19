@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:bestseeds/driver/controllers/driver_permissions_controller.dart';
 import 'package:bestseeds/driver/models/driver_booking_model.dart';
 import 'package:bestseeds/driver/models/driver_model.dart';
 import 'package:bestseeds/driver/repository/driver_auth_repository.dart';
@@ -16,6 +17,7 @@ import 'package:bestseeds/widgets/location_selector_screen.dart';
 import 'package:bestseeds/widgets/refresh_button.dart';
 import 'package:bestseeds/widgets/route_visualization.dart';
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
@@ -36,6 +38,8 @@ class _DriverDashboardState extends State<DriverDashboard>
       MethodChannel('bestseeds/device_info');
 
   int selectedTabIndex = 2;
+  final DriverPermissionsController _permController =
+      Get.put(DriverPermissionsController());
   final DriverStorageService _storage = DriverStorageService();
   final DriverAuthRepository _repo = DriverAuthRepository();
   Driver? _driver;
@@ -268,23 +272,13 @@ class _DriverDashboardState extends State<DriverDashboard>
   }
 
   Future<void> _pickLocation() async {
-    // Map selection disabled — use current GPS location only. The bottom sheet
-    // now shows just the "Use Current Location" option (the map option is
-    // commented out in LocationSelector).
+    // Opens the "Select Location" sheet with both options — Use Current Location
+    // and Select from Map (the map picker).
     final result = await LocationSelector.show(
       context: context,
       initialLatitude: _storage.getLocationLat(),
       initialLongitude: _storage.getLocationLng(),
     );
-    // Previously opened the full-screen map picker directly:
-    // final result = await Navigator.of(context).push<LocationData>(
-    //   MaterialPageRoute(
-    //     builder: (_) => LocationPickerScreen(
-    //       initialLatitude: _storage.getLocationLat(),
-    //       initialLongitude: _storage.getLocationLng(),
-    //     ),
-    //   ),
-    // );
     if (result == null || !mounted) return;
 
     await _storage.saveLocation(
@@ -480,6 +474,9 @@ class _DriverDashboardState extends State<DriverDashboard>
             /// ================= Search Bar =================
             _buildSearchBar(width, height),
 
+            /// ===== Permission prompts (only the ones still disabled) =====
+            _buildPermissionPrompts(width, height),
+
             /// ================= Tab Bar =================
             _buildTabBar(width, height),
 
@@ -490,6 +487,80 @@ class _DriverDashboardState extends State<DriverDashboard>
           ],
         ),
       ),
+      ),
+    );
+  }
+
+  /// Compact permission prompts shown on the main screen. Each row (label +
+  /// arrow) appears ONLY while that permission is still disabled:
+  ///   • both off  → both rows shown
+  ///   • one off   → only that row shown
+  ///   • both on   → nothing shown
+  /// Tapping a row redirects (request permission / open settings).
+  Widget _buildPermissionPrompts(double width, double height) {
+    return Obx(() {
+      final showLocation = !_permController.locationGranted.value;
+      final showBattery = !_permController.batteryDisabled.value;
+
+      if (!showLocation && !showBattery) return const SizedBox.shrink();
+
+      return Container(
+        color: const Color(0xFFF8F9FA),
+        padding: EdgeInsets.fromLTRB(width * 0.05, 0, width * 0.05, height * 0.01),
+        child: Column(
+          children: [
+            if (showLocation)
+              _permissionPromptRow(
+                icon: Icons.location_on_outlined,
+                label: 'Location',
+                onTap: () => _permController.enableLocation(),
+              ),
+            if (showLocation && showBattery) const SizedBox(height: 8),
+            if (showBattery)
+              _permissionPromptRow(
+                icon: Icons.battery_charging_full_outlined,
+                label: 'Background activity',
+                onTap: () => _permController.enableBattery(),
+              ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _permissionPromptRow({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFC62828).withOpacity(0.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: const Color(0xFFC62828)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                size: 22, color: Colors.grey),
+          ],
+        ),
       ),
     );
   }

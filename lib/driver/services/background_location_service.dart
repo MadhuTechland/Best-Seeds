@@ -197,6 +197,19 @@ class BackgroundLocationService {
       return;
     }
 
+    // CRITICAL: never try to (re)start the location foreground service while
+    // location permission/GPS is unavailable. A `location`-typed FGS started
+    // without the permission throws a SecurityException on Android, and the
+    // zombie-restart path below would loop forever (no GPS → last_sent never
+    // updates → always looks like a zombie → restart → SecurityException →
+    // repeat), hammering the main thread and crashing/exiting the app. Skip
+    // until location is back; the running service / UI raises the GPS-off alert.
+    if (!await _hasLocationAccess()) {
+      print('📍 [RESTART] location permission/GPS off — skipping restart until re-enabled');
+      TrackingLogger.log('⏸ restart skipped — location permission/GPS off');
+      return;
+    }
+
     final running = await isRunning();
     print('📍 [RESTART] shouldRun=true, isRunning=$running');
 
@@ -256,6 +269,21 @@ class BackgroundLocationService {
     await registerGuardianTask();
     await registerActiveCaptureTask();
     print('📍 [RESTART] ✅ Service + WorkManager tasks started');
+  }
+
+  /// True only when the OS will actually let us run a location foreground
+  /// service: location services (GPS) are ON and the app holds fine/coarse
+  /// location permission. Used to gate [restartIfNeeded] so we never trigger
+  /// a SecurityException restart loop when location is off.
+  static Future<bool> _hasLocationAccess() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return false;
+      final p = await Geolocator.checkPermission();
+      return p == LocationPermission.always ||
+          p == LocationPermission.whileInUse;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<void> _prepareAndroidBackgroundExecution() async {

@@ -295,23 +295,22 @@ class _LocationOptionsSheet extends StatelessWidget {
             subtitle: const Text('Get your current GPS location'),
             onTap: () => Navigator.pop(context, _LocationOption.currentLocation),
           ),
-          // ── "Select from Map" option disabled (use current GPS location only) ──
-          // const Divider(),
-          //
-          // /// Select from Map Option
-          // ListTile(
-          //   leading: Container(
-          //     padding: const EdgeInsets.all(10),
-          //     decoration: BoxDecoration(
-          //       color: primaryColor.withValues(alpha: 0.1),
-          //       borderRadius: BorderRadius.circular(10),
-          //     ),
-          //     child: Icon(Icons.map, color: primaryColor),
-          //   ),
-          //   title: const Text('Select from Map'),
-          //   subtitle: const Text('Choose location on map'),
-          //   onTap: () => Navigator.pop(context, _LocationOption.selectFromMap),
-          // ),
+          const Divider(),
+
+          /// Select from Map Option
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: primaryColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.map, color: primaryColor),
+            ),
+            title: const Text('Select from Map'),
+            subtitle: const Text('Choose location on map'),
+            onTap: () => Navigator.pop(context, _LocationOption.selectFromMap),
+          ),
           const SizedBox(height: 20),
         ],
       ),

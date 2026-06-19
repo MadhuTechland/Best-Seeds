@@ -128,7 +128,14 @@ class _DriverPermissionsSectionState extends State<DriverPermissionsSection>
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
-    return Padding(
+    // Whole row is tappable — tapping anywhere on the option triggers the same
+    // action as the toggle (request/enable when Off, open settings when On), so
+    // the user is redirected regardless of the current On/Off state. Tapping the
+    // Switch directly is still handled by the Switch itself.
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
@@ -201,6 +208,7 @@ class _DriverPermissionsSectionState extends State<DriverPermissionsSection>
             onChanged: onChanged,
           ),
         ],
+      ),
       ),
     );
   }
