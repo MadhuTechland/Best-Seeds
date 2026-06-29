@@ -16,6 +16,11 @@ import CoreLocation
   // continues without Flutter being fully initialised.
   private var nativeLocationManager: CLLocationManager?
 
+  // Timer that downgrades a native GPS wakeup back to SLC-only after the
+  // brief background window iOS grants us. Prevents the native side from
+  // holding a full GPS stream open indefinitely if Flutter never boots.
+  private var nativeTrackingStopTimer: Timer?
+
   private let baseUrl  = "https://aqua.bestseed.in/api/driver/location/update"
   private let tokenKey = "flutter.driver_token"           // SharedPreferences prefix
   private let runKey   = "flutter.bg_location_service_running"
@@ -49,15 +54,22 @@ import CoreLocation
       }
     }
 
-    // If iOS relaunched us because of a location event (app was terminated),
-    // restart native tracking immediately so we keep sending positions.
+    // If iOS relaunched us because of a location event (app was terminated
+    // mid-journey), restart native tracking just long enough to post one
+    // position; Flutter's `IosLocationService.start()` will re-arm the
+    // foreground stream + SLC once the engine boots and verifies the
+    // journey is still active.
+    //
+    // Do NOT arm SLC on plain cold launches (no `.location` key in
+    // launchOptions). SLC is persistent — once armed, iOS counts the app
+    // as a background-location consumer until stopMonitoringSLC is called
+    // explicitly. The Flutter side is the single source of truth for
+    // "start tracking"; native side only reacts to genuine wakeups.
     let launchedByLocation = launchOptions?[.location] != nil
     let trackingActive     = UserDefaults.standard.bool(forKey: runKey)
 
     if launchedByLocation && trackingActive {
-      startNativeTracking()   // full GPS stream for the brief wakeup window
-    } else if trackingActive {
-      startWatchdog()         // significant changes only — low battery cost
+      startNativeTracking()   // brief GPS window — auto-stops if Flutter doesn't claim it
     }
 
     return result
@@ -71,17 +83,37 @@ import CoreLocation
   }
 
   private func stopWatchdog() {
+    nativeTrackingStopTimer?.invalidate()
+    nativeTrackingStopTimer = nil
     nativeLocationManager?.stopMonitoringSignificantLocationChanges()
     nativeLocationManager?.stopUpdatingLocation()
   }
 
-  // Full accuracy stream — used when iOS wakes us from terminated state
+  // Full accuracy stream — used when iOS wakes us from terminated state.
+  // iOS gives ~30 s of background runtime for an SLC wakeup. We use it to
+  // post one or two positions, then drop back to SLC-only so we are not
+  // holding a GPS stream open without an active Flutter engine to validate
+  // that the journey is still live.
   private func startNativeTracking() {
     setupManager()
     nativeLocationManager?.desiredAccuracy = kCLLocationAccuracyBest
     nativeLocationManager?.distanceFilter  = 10
     nativeLocationManager?.startUpdatingLocation()
     nativeLocationManager?.startMonitoringSignificantLocationChanges()
+
+    nativeTrackingStopTimer?.invalidate()
+    nativeTrackingStopTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: false) { [weak self] _ in
+      guard let self = self else { return }
+      // If the journey is still active per the run flag, Flutter
+      // (IosLocationService.start) will have its own foreground stream
+      // running by now. Either way, the native side should stop the
+      // power-hungry continuous stream — SLC stays armed only while the
+      // journey is active so iOS can wake us again if the process dies.
+      self.nativeLocationManager?.stopUpdatingLocation()
+      if !UserDefaults.standard.bool(forKey: self.runKey) {
+        self.stopWatchdog()
+      }
+    }
   }
 
   private func setupManager() {
