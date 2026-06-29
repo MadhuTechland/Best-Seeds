@@ -222,6 +222,18 @@ class _DriverDashboardState extends State<DriverDashboard>
     }
   }
 
+  /// Called after bookings API confirms NO live journey exists.
+  /// If the tracking flag is somehow still on, stop the background service
+  /// so iOS's persistent SLC monitor is released (otherwise iOS counts the
+  /// app as a background-location consumer indefinitely and shows the
+  /// "used your location in the background over the past 3 days" prompt).
+  Future<void> _stopTrackingIfNoLiveJourney() async {
+    final shouldRun = await BackgroundLocationService.shouldBeRunning();
+    if (!shouldRun) return;
+    debugPrint('📍 [HOME] ⚠️ Backend has NO live journey but tracking flag is ON — stopping tracking');
+    await BackgroundLocationService.stop();
+  }
+
   /// Called after bookings API confirms live journeys exist.
   /// If tracking flag is off (SharedPreferences lost/cleared), force-start it.
   /// Also refreshes the token in SharedPreferences so the background isolate
@@ -311,7 +323,7 @@ class _DriverDashboardState extends State<DriverDashboard>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
-      debugPrint('📍 [HOME] App RESUMED — refreshing token + checking tracking...');
+      debugPrint('📍 [HOME] App RESUMED — refreshing token + reconciling tracking...');
       // Refresh token so background isolate always has the latest
       final currentToken = _storage.getToken();
       if (currentToken != null && currentToken.isNotEmpty) {
@@ -319,7 +331,13 @@ class _DriverDashboardState extends State<DriverDashboard>
           sp.setString('driver_token', currentToken);
         });
       }
-      BackgroundLocationService.restartIfNeeded();
+      // Refresh bookings first — _fetchBookings is the canonical
+      // start/stop reconciler (live > 0 ⇒ ensure tracking; live == 0
+      // ⇒ stop tracking). restartIfNeeded() afterwards is then a no-op
+      // when no journey is live, instead of blindly reviving SLC on iOS.
+      _fetchBookings().then((_) {
+        BackgroundLocationService.restartIfNeeded();
+      });
     }
   }
 
@@ -373,6 +391,13 @@ class _DriverDashboardState extends State<DriverDashboard>
         // This catches: hot restart, app data cleared, flag lost, etc.
         if (response.counts.live > 0) {
           _ensureTrackingForLiveJourney();
+        } else {
+          // Inverse: backend says no live journey — make sure tracking
+          // (and on iOS, the persistent SLC monitor) is fully stopped.
+          // Without this the run flag can stay stuck true after a journey
+          // ends via a path that doesn't go through stop(), and iOS keeps
+          // counting the app as a background-location consumer.
+          _stopTrackingIfNoLiveJourney();
         }
       }
     } catch (e) {
