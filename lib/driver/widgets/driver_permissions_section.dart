@@ -25,6 +25,12 @@ class _DriverPermissionsSectionState extends State<DriverPermissionsSection>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Re-read the REAL device permission state every time the profile opens
+    // (the controller may be a cached singleton holding a stale value), and
+    // sync it so the toggle AND the admin panel reflect reality immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.refreshFromSystem(sync: true);
+    });
   }
 
   @override
@@ -89,8 +95,12 @@ class _DriverPermissionsSectionState extends State<DriverPermissionsSection>
                     value: controller.locationGranted.value,
                     onChanged: (want) {
                       if (want) {
+                        // OFF → enabling: show the OS system dialog (request).
                         controller.enableLocation();
                       } else {
+                        // ON → disabling: open the app's settings page so the
+                        // driver can revoke it (Permissions → Location), since
+                        // Android has no in-app dialog to turn it off.
                         controller.openManageSettings();
                       }
                     },

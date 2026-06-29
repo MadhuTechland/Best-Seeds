@@ -220,6 +220,7 @@ class AuthService {
         'packing_date': preferredDate,
         'price': travelCost,
         'delivery_datetime': expectedDeliveryDate,
+        'delivery_date': expectedDeliveryDate,
         if (bookingDescription != null)
           'vendor_booking_description': bookingDescription,
         if (vehicleDescription != null)

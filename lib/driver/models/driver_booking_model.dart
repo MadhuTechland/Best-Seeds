@@ -250,6 +250,7 @@ class DropBooking {
   final double? dropLng;
   final String? deliveryNote;
   final DateTime? deliveryDatetime;
+  final DateTime? deliveryDate;
   final int? priority;
   // Per-booking category. Bookings grouped into the same route can
   // belong to different categories (e.g. one is "syaqua" and another
@@ -270,6 +271,7 @@ class DropBooking {
     this.dropLng,
     this.deliveryNote,
     this.deliveryDatetime,
+    this.deliveryDate,
     this.priority,
     this.categoryName,
   });
@@ -286,12 +288,46 @@ class DropBooking {
       dropLat: _parseDouble(json['drop_lat']),
       dropLng: _parseDouble(json['drop_lng']),
       deliveryNote: json['delivery_note'],
-      deliveryDatetime: json['delivery_datetime'] != null
-          ? DateTime.tryParse(json['delivery_datetime'])
-          : null,
+      deliveryDatetime: _parseDate(json['delivery_datetime']),
+      deliveryDate: _parseDate(json['delivery_date']),
       priority: json['priority'],
       categoryName: json['category_name'],
     );
+  }
+
+  static DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    final str = value.toString().trim();
+    if (str.isEmpty || str == 'null' || str == 'N/A') return null;
+    try {
+      final iso = DateTime.tryParse(str);
+      if (iso != null) return iso;
+      if (str.contains('/')) {
+        final parts = str.split('/');
+        if (parts.length >= 3) {
+          final day = int.tryParse(parts[0]) ?? 1;
+          final month = int.tryParse(parts[1]) ?? 1;
+          final year = int.tryParse(parts[2].split(' ')[0]) ?? 2026;
+          return DateTime(year, month, day);
+        }
+      }
+      if (str.contains('-')) {
+        final parts = str.split('-');
+        if (parts.length >= 3) {
+          final dayOrYear = int.tryParse(parts[0]) ?? 2026;
+          final month = int.tryParse(parts[1]) ?? 1;
+          final yearOrDay = int.tryParse(parts[2].split(' ')[0]) ?? 1;
+          // Determine which is day and which is year
+          if (dayOrYear > 1000) {
+            return DateTime(dayOrYear, month, yearOrDay);
+          } else {
+            return DateTime(yearOrDay, month, dayOrYear);
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   static int _parseInt(dynamic value) {

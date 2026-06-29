@@ -10,6 +10,7 @@ class Booking {
   final int? salinity;
   final String? preferredDate;
   final String? deliveryDatetime;
+  final String? deliveryDate;
   final String droppingLocation;
   final double travelCost;
   final String? bookingDescription;
@@ -36,6 +37,7 @@ class Booking {
     this.salinity,
     this.preferredDate,
     this.deliveryDatetime,
+    this.deliveryDate,
     required this.droppingLocation,
     required this.travelCost,
     this.bookingDescription,
@@ -63,7 +65,12 @@ class Booking {
       noOfPieces: json['no_of_pieces'] ?? 0,
       salinity: json['salinity'],
       preferredDate: json['packing_date'],
-      deliveryDatetime: json['delivery_datetime'],
+      deliveryDatetime: (json['delivery_datetime'] != null && json['delivery_datetime'].toString().isNotEmpty)
+          ? json['delivery_datetime'].toString()
+          : (json['delivery_date']?.toString()),
+      deliveryDate: (json['delivery_date'] != null && json['delivery_date'].toString().isNotEmpty)
+          ? json['delivery_date'].toString()
+          : (json['delivery_datetime']?.toString()),
       droppingLocation: json['drop_location'] ?? '',
       travelCost: (json['price'] != null) ? double.tryParse(json['price'].toString()) ?? 0.0 : 0.0,
       bookingDescription: json['vendor_booking_description'] ?? '',

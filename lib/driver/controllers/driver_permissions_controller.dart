@@ -83,7 +83,12 @@ class DriverPermissionsController extends GetxController {
 
   Future<bool> _checkLocation() async {
     try {
-      final p = await Geolocator.checkPermission();
+      // The toggle reflects the app's LOCATION PERMISSION: on when granted
+      // (while-in-use or always), off otherwise. Read fresh every time so it
+      // matches reality after the driver changes it in Settings.
+      final p = await Geolocator.checkPermission()
+          .timeout(const Duration(seconds: 3),
+              onTimeout: () => LocationPermission.denied);
       return p == LocationPermission.always ||
           p == LocationPermission.whileInUse;
     } catch (_) {
@@ -93,14 +98,19 @@ class DriverPermissionsController extends GetxController {
 
   Future<bool> _checkBattery() async {
     if (!Platform.isAndroid) return true; // iOS has no such restriction
-    // Standard API first.
+    // Standard API first (timeout so a stuck plugin call can't freeze refresh).
     try {
-      if (await Permission.ignoreBatteryOptimizations.isGranted) return true;
+      final granted = await Permission.ignoreBatteryOptimizations.isGranted
+          .timeout(const Duration(seconds: 3), onTimeout: () => false);
+      if (granted) return true;
     } catch (_) {}
     // OEM-accurate native check (some OEMs misreport via the standard API).
+    // Timeout-guarded: a hung platform channel must never block future reads
+    // (that would leave _refreshInProgress stuck and freeze the toggles).
     try {
       final isIgnoring = await _deviceInfoChannel
-              .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+              .invokeMethod<bool>('isIgnoringBatteryOptimizations')
+              .timeout(const Duration(seconds: 3), onTimeout: () => null) ??
           false;
       return isIgnoring;
     } catch (_) {
@@ -110,32 +120,40 @@ class DriverPermissionsController extends GetxController {
 
   // ── Enable actions (tapping a toggle that's OFF) ────────────────────────────
 
-  /// Requests location permission. Handles every outcome:
-  ///   granted → reflected + synced; denied → snackbar; permanently denied →
-  ///   opens app settings so the driver can enable it manually.
+  /// Requests location permission DIRECTLY via the system dialog — the same
+  /// in-place prompt the driver gets when starting a journey. Tapping the
+  /// toggle should ask right here, NOT send the driver off to app settings.
   Future<void> enableLocation() async {
     if (_requestInProgress) return;
     _requestInProgress = true;
     try {
       var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
+      final wasGranted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+
+      // Only the OS grant dialog can appear, and only when NOT already granted.
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
         permission = await Geolocator.requestPermission();
       }
 
-      if (permission == LocationPermission.deniedForever) {
-        _info(
-          'Location permission was permanently denied. Please enable it in '
-          'app settings.',
-        );
-        await _safe(() => Geolocator.openAppSettings());
-      } else if (permission == LocationPermission.denied) {
-        _info('Location permission denied.');
-      } else {
+      final granted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+      // Reflect the result on the toggle immediately, then sync below.
+      locationGranted.value = granted;
+
+      if (granted && !wasGranted) {
+        // It actually just turned ON via the dialog.
         _success('Location permission enabled');
+      } else if (!granted) {
+        // System dialog only — no Settings redirect. If Android permanently
+        // blocked it (denied twice), the dialog won't appear.
+        _info('Location permission denied.');
       }
+      // Already granted before the tap → no toast (and Android has no in-app
+      // dialog to turn a granted permission OFF, so nothing happens here).
     } catch (e) {
-      _error('Could not request location permission. Please try from settings.');
-      await _safe(() => Geolocator.openAppSettings());
+      _error('Could not request location permission.');
     } finally {
       _requestInProgress = false;
       await refreshFromSystem(sync: true);
@@ -160,8 +178,10 @@ class DriverPermissionsController extends GetxController {
         // Fallback to the standard request if the native method is unavailable.
         await Permission.ignoreBatteryOptimizations.request();
       }
-      // Give the system dialog a moment to settle before re-reading.
+      // Give the system dialog a moment to settle, then reflect the new state
+      // on the toggle immediately (the refresh below also re-reads + syncs).
       await Future.delayed(const Duration(milliseconds: 600));
+      batteryDisabled.value = await _checkBattery();
     } catch (e) {
       _error('Could not open battery settings. Please enable it manually.');
       await _safe(() => openAppSettings());
@@ -177,11 +197,13 @@ class DriverPermissionsController extends GetxController {
     }
   }
 
-  /// A toggle that's already ON can't be revoked programmatically — open the
-  /// app settings so the driver can manage it themselves.
+  /// A toggle that's already ON can't be revoked programmatically — open THIS
+  /// app's settings page (App info → Permissions) so the driver can turn it off
+  /// there. Used by the Battery tile.
   Future<void> openManageSettings() async {
     await _safe(() => openAppSettings());
   }
+
 
   // ── Backend sync ────────────────────────────────────────────────────────────
 

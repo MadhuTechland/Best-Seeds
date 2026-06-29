@@ -177,15 +177,14 @@ class _DriverLocationGuardState extends State<DriverLocationGuard>
               ? 'Permission Required'
               : 'Location Service is Off',
           message: useAppSettings
-              ? 'Location permission was denied. Enable it in app settings to keep tracking your deliveries.'
+              ? 'Location permission was denied. Enable it in Location settings to keep tracking your deliveries.'
               : 'Please turn on GPS / Location on your device to continue delivering.',
           primaryLabel: 'Open Settings',
           onPrimary: () async {
-            if (useAppSettings) {
-              await DriverLocationPermissionService.openAppSettings();
-            } else {
-              await DriverLocationPermissionService.openLocationSettings();
-            }
+            // Always open the device Location settings page (the most
+            // location-specific page available) — for both "service off" and
+            // "permission denied" — instead of the generic App-info page.
+            await DriverLocationPermissionService.openLocationSettings();
             // didChangeAppLifecycleState will fire again on resume and
             // close the dialog if the driver fixed it.
           },

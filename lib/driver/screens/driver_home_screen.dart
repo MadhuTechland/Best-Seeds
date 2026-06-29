@@ -320,6 +320,10 @@ class _DriverDashboardState extends State<DriverDashboard>
         });
       }
       BackgroundLocationService.restartIfNeeded();
+      // Re-read the location/battery permission state and push it to the admin
+      // panel, so the app + backend stay in sync even when the driver toggles
+      // the permission in system settings while on the home screen.
+      _permController.refreshFromSystem(sync: true);
     }
   }
 
@@ -1504,7 +1508,9 @@ class _DriverDashboardState extends State<DriverDashboard>
             icon: Icons.location_on_rounded,
             iconColor: const Color(0xFF0077C8),
           );
-          if (shouldOpen) await openAppSettings();
+          // Open the Location settings page directly (most location-specific
+          // page available), not the generic App-info page.
+          if (shouldOpen) await Geolocator.openLocationSettings();
         } else {
           AppSnackbar.error(
               'Location permission is required to track your delivery.');

@@ -128,7 +128,19 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     if (widget.booking.deliveryDatetime != null &&
         widget.booking.deliveryDatetime!.isNotEmpty) {
       _expectedDeliveryDate = _parseDate(widget.booking.deliveryDatetime!);
+    } else if (widget.booking.deliveryDate != null &&
+        widget.booking.deliveryDate!.isNotEmpty) {
+      _expectedDeliveryDate = _parseDate(widget.booking.deliveryDate!);
     }
+
+    // Add debug print logs
+    debugPrint('=== Hatchery Edit Debug Logs ===');
+    debugPrint('Booking ID: ${widget.booking.bookingId}');
+    debugPrint('preferredDate (packing_date): ${widget.booking.preferredDate}');
+    debugPrint('deliveryDatetime (expected): ${widget.booking.deliveryDatetime}');
+    debugPrint('deliveryDate (farmer requested): ${widget.booking.deliveryDate}');
+    debugPrint('_expectedDeliveryDate: $_expectedDeliveryDate');
+    debugPrint('================================');
 
     // Initialize location from model
     _selectedLatitude = widget.booking.latitude;
@@ -146,6 +158,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
         'dd/MM/yyyy',
         'MM/dd/yyyy',
         'yyyy-MM-dd HH:mm:ss',
+        'dd-MM-yyyy',
       ];
       for (final format in formats) {
         try {
@@ -177,11 +190,19 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
   }
 
   Future<void> _selectPreferredDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    DateTime initDate = _preferredDate ?? today;
+    DateTime firstDate = DateTime(2020);
+    DateTime lastDate = today.add(const Duration(days: 1095));
+    if (initDate.isBefore(firstDate)) initDate = firstDate;
+    if (initDate.isAfter(lastDate)) initDate = lastDate;
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _preferredDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: initDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -203,11 +224,19 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
   }
 
   Future<void> _selectExpectedDeliveryDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    DateTime initDate = _expectedDeliveryDate ?? today;
+    DateTime firstDate = DateTime(2020);
+    DateTime lastDate = today.add(const Duration(days: 1095));
+    if (initDate.isBefore(firstDate)) initDate = firstDate;
+    if (initDate.isAfter(lastDate)) initDate = lastDate;
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: _expectedDeliveryDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: initDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -433,6 +462,20 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                         _travelCostController, TextInputType.number),
                     SizedBox(height: height * 0.025),
 
+                    /*
+                    /// Preferred Delivery Date (read-only requested date)
+                    if (widget.booking.deliveryDate != null &&
+                        widget.booking.deliveryDate!.isNotEmpty) ...[
+                      _buildReadOnlyField(
+                        width,
+                        height,
+                        'Preferred Delivery Date',
+                        widget.booking.deliveryDate!,
+                      ),
+                      SizedBox(height: height * 0.025),
+                    ],
+                    */
+
                     /// Expected Delivery Date with calendar
                     _buildDateField(
                       width,
@@ -484,7 +527,63 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                     SizedBox(height: height * 0.03),
                     if (_driverDetails.isAssigned) ...[
                       _buildDriverInfoCard(width, height),
-                    ]
+                    ],
+
+                    /*
+                    // Visual Debug Logs for Testing
+                    Card(
+                      color: Colors.red.shade50.withValues(alpha: 0.8),
+                      elevation: 0,
+                      margin: EdgeInsets.only(top: height * 0.03),
+              give in         shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: Colors.red.shade200),
+                      ),
+                      child: Padding(
+                        padding: EdgeInsets.all(width * 0.04),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.bug_report, color: Colors.red.shade800),
+                                SizedBox(width: width * 0.02),
+                                Text(
+                                  'Testing Debug Logs',
+                                  style: TextStyle(
+                                    fontSize: width * 0.04,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.shade800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: height * 0.015),
+                            Text(
+                              'Booking ID: ${widget.booking.bookingId}',
+                              style: const TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            SizedBox(height: height * 0.005),
+                            Text(
+                              'API delivery_date (Preferred): ${widget.booking.deliveryDate ?? "null/empty"}',
+                            ),
+                            SizedBox(height: height * 0.005),
+                            Text(
+                              'API delivery_datetime (Expected): ${widget.booking.deliveryDatetime ?? "null/empty"}',
+                            ),
+                            SizedBox(height: height * 0.005),
+                            Text(
+                              'Prefilled Expected Date State: ${_expectedDeliveryDate != null ? _formatDate(_expectedDeliveryDate!) : "null"}',
+                            ),
+                            SizedBox(height: height * 0.005),
+                            Text(
+                              'Prefilled Preferred Date State: ${_preferredDate != null ? _formatDate(_preferredDate!) : "null"}',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    */
                   ],
                 ),
               ),
@@ -1465,13 +1564,19 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                 SizedBox(height: height * 0.01),
                                 GestureDetector(
                                   onTap: () async {
+                                    final now = DateTime.now();
+                                    final today = DateTime(now.year, now.month, now.day);
+                                    DateTime initDate = vehicleStartDate ?? today;
+                                    DateTime firstDate = DateTime(2020);
+                                    DateTime lastDate = today.add(const Duration(days: 1095));
+                                    if (initDate.isBefore(firstDate)) initDate = firstDate;
+                                    if (initDate.isAfter(lastDate)) initDate = lastDate;
+
                                     final picked = await showDatePicker(
                                       context: context,
-                                      initialDate:
-                                          vehicleStartDate ?? DateTime.now(),
-                                      firstDate: DateTime.now(),
-                                      lastDate: DateTime.now()
-                                          .add(const Duration(days: 365)),
+                                      initialDate: initDate,
+                                      firstDate: firstDate,
+                                      lastDate: lastDate,
                                       builder: (context, child) {
                                         return Theme(
                                           data: Theme.of(context).copyWith(
@@ -1544,14 +1649,19 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                                 SizedBox(height: height * 0.01),
                                 GestureDetector(
                                   onTap: () async {
+                                    final now = DateTime.now();
+                                    final today = DateTime(now.year, now.month, now.day);
+                                    DateTime initDate = vehicleEndDate ?? vehicleStartDate ?? today;
+                                    DateTime firstDate = vehicleStartDate ?? DateTime(2020);
+                                    DateTime lastDate = today.add(const Duration(days: 1095));
+                                    if (initDate.isBefore(firstDate)) initDate = firstDate;
+                                    if (initDate.isAfter(lastDate)) initDate = lastDate;
+
                                     final picked = await showDatePicker(
                                       context: context,
-                                      initialDate:
-                                          vehicleEndDate ?? DateTime.now(),
-                                      firstDate:
-                                          vehicleStartDate ?? DateTime.now(),
-                                      lastDate: DateTime.now()
-                                          .add(const Duration(days: 365)),
+                                      initialDate: initDate,
+                                      firstDate: firstDate,
+                                      lastDate: lastDate,
                                       builder: (context, child) {
                                         return Theme(
                                           data: Theme.of(context).copyWith(
