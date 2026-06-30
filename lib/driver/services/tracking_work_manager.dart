@@ -14,7 +14,7 @@ import 'tracking_logger.dart';
 // Must match the constants in background_location_service.dart
 // const String _wmBaseUrl = 'http://192.168.0.104:8000/api/';
 // const String _wmBaseUrl = 'http://192.168.29.111:8000/api/';
-const String _wmBaseUrl = 'https://staging.bestseed.in/api/';
+const String _wmBaseUrl = 'https://aqua.bestseed.in/api/';
 const String _wmLocationEndpoint = 'driver/location/update';
 const String _wmTrackingAlertEndpoint = 'driver/tracking-alert';
 const String _wmTokenKey = 'driver_token';

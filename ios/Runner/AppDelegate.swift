@@ -52,6 +52,49 @@ import CoreLocation
         default: result(FlutterMethodNotImplemented)
         }
       }
+
+      // Live Activity channel — drives the lock-screen / Dynamic Island tile.
+      // Flutter calls start at journey start, update on every successful
+      // location send, and end at journey completion / logout / 401.
+      let liveActivityChannel = FlutterMethodChannel(
+        name: "com.bestseed/live_activity",
+        binaryMessenger: controller.binaryMessenger
+      )
+      liveActivityChannel.setMethodCallHandler { call, result in
+        if call.method == "end" {
+          BestseedLiveActivityManager.shared.end()
+          result(nil)
+          return
+        }
+        guard let args = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "bad_args", message: "expected map", details: nil))
+          return
+        }
+        switch call.method {
+        case "start":
+          BestseedLiveActivityManager.shared.start(
+            journeyId: args["journeyId"] as? String ?? "",
+            driverName: args["driverName"] as? String ?? "",
+            locationName: args["locationName"] as? String ?? "Tracking active",
+            latitude: args["latitude"] as? Double ?? 0,
+            longitude: args["longitude"] as? Double ?? 0,
+            lastSentAtEpoch: args["lastSentAtEpoch"] as? Double ?? Date().timeIntervalSince1970,
+            nextStop: args["nextStop"] as? String
+          )
+          result(nil)
+        case "update":
+          BestseedLiveActivityManager.shared.update(
+            locationName: args["locationName"] as? String ?? "Tracking active",
+            latitude: args["latitude"] as? Double ?? 0,
+            longitude: args["longitude"] as? Double ?? 0,
+            lastSentAtEpoch: args["lastSentAtEpoch"] as? Double ?? Date().timeIntervalSince1970,
+            nextStop: args["nextStop"] as? String
+          )
+          result(nil)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
     }
 
     // If iOS relaunched us because of a location event (app was terminated
@@ -141,6 +184,18 @@ import CoreLocation
     }
 
     postLocation(lat: loc.coordinate.latitude, lng: loc.coordinate.longitude, token: token)
+
+    // Keep the lock-screen tile fresh even when Flutter is dead — this is
+    // the swipe-kill recovery path. The activity stays alive for up to ~8 h
+    // after being started, so as long as journeys end before that the user
+    // sees a live tile across the entire delivery.
+    BestseedLiveActivityManager.shared.update(
+      locationName: "Live vehicle location",
+      latitude: loc.coordinate.latitude,
+      longitude: loc.coordinate.longitude,
+      lastSentAtEpoch: Date().timeIntervalSince1970,
+      nextStop: nil
+    )
   }
 
   func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

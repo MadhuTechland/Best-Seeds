@@ -6,6 +6,7 @@ import 'package:bestseeds/employee/screens/notification_screen.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
+import 'package:bestseeds/driver/services/on_demand_location.dart';
 import 'package:bestseeds/driver/service/auth_service.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -101,6 +102,14 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     try { await BackgroundLocationService.stop(); } catch (_) {}
     try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
     return; // suppress the notification banner — silent logout
+  }
+
+  // On-demand location request from the server (vendor opened tracking
+  // screen, customer ETA refresh, etc.). Capture one fresh GPS fix, POST
+  // it, and return — no notification banner shown.
+  if (message.data['type'] == 'request_location') {
+    await captureAndPostOnDemandLocation();
+    return;
   }
 
   await _showBackgroundNotification(message);
@@ -297,6 +306,13 @@ class NotificationService {
       print('FCM Foreground message: ${message.data}');
       if (message.data['type'] == 'force_logout') {
         _handleDriverForceLogout();
+        return;
+      }
+      // On-demand location request — same handler as the background path,
+      // just runs synchronously here. No banner; this is a silent
+      // data-only message.
+      if (message.data['type'] == 'request_location') {
+        captureAndPostOnDemandLocation();
         return;
       }
       _showLocalNotification(message);

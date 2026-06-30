@@ -25,7 +25,7 @@ import 'tracking_work_manager.dart';
 // const String _baseUrl =
 //     'http://192.168.29.111:8000/api/';
 const String _baseUrl =
-    'https://staging.bestseed.in/api/';
+    'https://aqua.bestseed.in/api/';
 const String _locationUpdateEndpoint = 'driver/location/update';
 const String _trackingAlertEndpoint = 'driver/tracking-alert';
 const String _googleApiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
