@@ -17,6 +17,22 @@ import ActivityKit
 
     // MARK: - Public API
 
+    /// Convert the dictionary form of stops (sent across the Flutter
+    /// MethodChannel as `[[String: Any]]`) into the typed Swift struct used
+    /// by the widget. Invalid entries are silently dropped.
+    @available(iOS 16.1, *)
+    private func parseStops(_ raw: [[String: Any]]?) -> [BestseedRouteStop] {
+        guard let raw else { return [] }
+        return raw.compactMap { dict in
+            guard
+                let name = dict["name"] as? String,
+                let progress = dict["progress"] as? Double
+            else { return nil }
+            let status = (dict["status"] as? Int) ?? 0
+            return BestseedRouteStop(name: name, progress: progress, status: status)
+        }
+    }
+
     /// Start a Live Activity for an active delivery journey.
     /// Idempotent — if one is already running, this just updates it.
     @objc func start(
@@ -26,13 +42,20 @@ import ActivityKit
         latitude: Double,
         longitude: Double,
         lastSentAtEpoch: Double,
-        nextStop: String?
+        nextStop: String?,
+        pickupName: String?,
+        dropName: String?,
+        progress: Double,
+        etaText: String?,
+        stops: [[String: Any]]?
     ) {
         guard #available(iOS 16.1, *) else { return }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             NSLog("LiveActivity: user has disabled Live Activities — skipping")
             return
         }
+
+        let parsedStops = parseStops(stops)
 
         // If there's already an activity for this journey, update it instead
         // of starting a duplicate. Restarting tracking after a token refresh
@@ -43,7 +66,12 @@ import ActivityKit
                 latitude: latitude,
                 longitude: longitude,
                 lastSentAtEpoch: lastSentAtEpoch,
-                nextStop: nextStop
+                nextStop: nextStop,
+                pickupName: pickupName,
+                dropName: dropName,
+                progress: progress,
+                etaText: etaText,
+                stops: stops
             )
             return
         }
@@ -57,7 +85,12 @@ import ActivityKit
             latitude: latitude,
             longitude: longitude,
             lastSentAt: Date(timeIntervalSince1970: lastSentAtEpoch),
-            nextStop: nextStop
+            nextStop: nextStop,
+            pickupName: pickupName,
+            dropName: dropName,
+            progress: progress,
+            etaText: etaText,
+            stops: parsedStops
         )
 
         do {
@@ -89,7 +122,12 @@ import ActivityKit
         latitude: Double,
         longitude: Double,
         lastSentAtEpoch: Double,
-        nextStop: String?
+        nextStop: String?,
+        pickupName: String?,
+        dropName: String?,
+        progress: Double,
+        etaText: String?,
+        stops: [[String: Any]]?
     ) {
         guard #available(iOS 16.1, *) else { return }
         guard let id = currentActivityId,
@@ -98,12 +136,18 @@ import ActivityKit
             return
         }
 
+        let parsedStops = parseStops(stops)
         let newState = BestseedTrackingAttributes.ContentState(
             locationName: locationName,
             latitude: latitude,
             longitude: longitude,
             lastSentAt: Date(timeIntervalSince1970: lastSentAtEpoch),
-            nextStop: nextStop
+            nextStop: nextStop,
+            pickupName: pickupName,
+            dropName: dropName,
+            progress: progress,
+            etaText: etaText,
+            stops: parsedStops
         )
 
         Task {

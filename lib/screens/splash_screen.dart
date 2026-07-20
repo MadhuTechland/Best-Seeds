@@ -6,6 +6,7 @@ import 'package:bestseeds/employee/services/storage_service.dart';
 import 'package:bestseeds/routes/app_constants.dart';
 import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/services/notification_service.dart';
+import 'package:bestseeds/services/version_check_service.dart';
 import 'package:bestseeds/widgets/login_location_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -30,6 +31,22 @@ class _SplashScreenState extends State<SplashScreen> {
 
     final employeeStorage = StorageService();
     final driverStorage = DriverStorageService();
+
+    // ── Force-update gate ──
+    // Ask the backend if the installed build is still supported for the
+    // active session's app. If a force-update is required, the service
+    // shows a blocking dialog and we short-circuit here so no further
+    // navigation happens behind it. If neither session exists we skip
+    // the check — the login screen has nothing that can go wrong.
+    final hasEmployeeSession = await employeeStorage.getUser() != null;
+    final hasDriverSession = await driverStorage.getDriver() != null;
+    if (hasDriverSession) {
+      final r = await VersionCheckService.runOnStartup(app: 'driver');
+      if (r == VersionCheckResult.forceUpdate) return;
+    } else if (hasEmployeeSession) {
+      final r = await VersionCheckService.runOnStartup(app: 'vendor');
+      if (r == VersionCheckResult.forceUpdate) return;
+    }
 
     // Check if employee is logged in
     final employee = await employeeStorage.getUser();
@@ -101,13 +118,28 @@ class _SplashScreenState extends State<SplashScreen> {
     // Check if driver is logged in
     final driver = await driverStorage.getDriver();
     if (driver != null) {
-      // Validate token — catches stale tokens restored from Android backup after reinstall
+      // Validate token — catches stale tokens restored from Android backup after reinstall.
+      // Retry once on 401 with a short delay to survive network handoffs
+      // (mobile↔WiFi, captive-portal middleboxes) — mirrors the retry in
+      // api_clients.dart. Only logout if two consecutive 401s in a row.
       try {
-        final validate = await http.get(
+        Future<http.Response> validate() => http.get(
           Uri.parse(AppConstants.baseUrl + AppConstants.driverProfileApi),
           headers: {'Authorization': 'Bearer ${driver.token}', 'Accept': 'application/json'},
         ).timeout(const Duration(seconds: 5));
-        if (validate.statusCode == 401) {
+
+        var resp = await validate();
+        if (resp.statusCode == 401) {
+          await Future.delayed(const Duration(milliseconds: 1500));
+          try {
+            resp = await validate();
+          } catch (_) {
+            // Network still unstable — keep session, proceed with cached data.
+            print('Splash: retry-validate network error, keeping session');
+            resp = http.Response('', 200); // synthetic pass-through
+          }
+        }
+        if (resp.statusCode == 401) {
           await driverStorage.logout();
           Get.offAllNamed(AppRoutes.login);
           return;

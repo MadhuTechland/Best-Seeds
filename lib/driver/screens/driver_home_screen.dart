@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bestseeds/driver/controllers/driver_permissions_controller.dart';
@@ -8,6 +9,7 @@ import 'package:bestseeds/driver/screens/driver_location_tracking.dart';
 import 'package:bestseeds/driver/screens/drop_location_bottomsheet.dart';
 import 'package:bestseeds/driver/screens/profile_screen.dart';
 import 'package:bestseeds/driver/screens/tracking_logs_screen.dart';
+import 'package:bestseeds/driver/services/active_journey_prefs.dart';
 import 'package:bestseeds/driver/services/background_location_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
 import 'package:bestseeds/driver/services/tracking_alert_service.dart';
@@ -218,6 +220,12 @@ class _DriverDashboardState extends State<DriverDashboard>
     if (running && mounted) {
       setState(() {
         selectedTabIndex = 1; // Live tab
+        // Re-filter for the new tab. Without this, _filteredRoutes still
+        // holds whatever was filtered for the previous tab (often the
+        // initial "Assigned" = status 3), so the UI shows "No bookings
+        // found" even though _liveCount > 0 — exactly the empty-on-open
+        // bug the driver sees until they tap refresh.
+        _filterRoutes();
       });
     }
   }
@@ -269,6 +277,10 @@ class _DriverDashboardState extends State<DriverDashboard>
       if (mounted) {
         setState(() {
           selectedTabIndex = 1; // Live tab
+          // Re-filter so the list reflects the new tab (see same fix in
+          // _checkActiveJourney). Without this, switching to Live shows
+          // the previous tab's filtered list.
+          _filterRoutes();
         });
       }
     } else {
@@ -390,6 +402,11 @@ class _DriverDashboardState extends State<DriverDashboard>
           _filterRoutes();
           _isLoading = false;
         });
+
+        // Persist the active journey's pickup + next-drop so the iOS Live
+        // Activity tile can render its Maps-style route bar. Clears the
+        // keys when no live route is found (delivered / cancelled).
+        unawaited(ActiveJourneyPrefs.syncFromRoutes(response.routes));
 
         // If backend has live journeys but tracking is off, auto-start it.
         // This catches: hot restart, app data cleared, flag lost, etc.

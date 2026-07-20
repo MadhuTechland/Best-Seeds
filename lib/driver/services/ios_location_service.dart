@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'active_journey_prefs.dart';
 import 'background_location_service.dart' show reverseGeocodeHttp;
 import 'live_activity_service.dart';
 import 'tracking_database.dart';
@@ -40,37 +41,34 @@ class IosLocationService {
   static const Duration _streamSilenceThreshold = Duration(seconds: 90);
 
   static StreamSubscription<Position>? _subscription;
+  // True while start() is mid-flight. Without this, two concurrent callers
+  // (e.g. _checkActiveJourney + _ensureTrackingForLiveJourney both firing
+  // on app open) can each pass the `_subscription == null` guard before
+  // either has assigned _subscription, ending up with TWO journey-start
+  // banner notifications and possibly two stream subscriptions.
+  static bool _starting = false;
   static Timer? _watchdogTimer;
   static DateTime? _lastSentAt;
   static Position? _lastSentPosition;
   static String? _lastLocationName;
   static DateTime? _lastGeocodeAt;
   static Position? _lastGeocodePosition;
+  // Last location name shown in the persistent tracking notification.
+  // The notification is only re-posted when the resolved place name
+  // actually changes (driver enters a new locality), keeping the banner
+  // flashes that iOS fires on each update to ~1 per stop instead of
+  // ~1 per minute. The Live Activity tile handles per-tick updates.
+  static String? _lastNotificationLocationName;
 
   static final _notif = FlutterLocalNotificationsPlugin();
 
   static bool get isActive => _subscription != null;
 
-  /// Build the notification body that mirrors Android's format:
-  ///   `<place name> • GPS just now`
-  ///   `<place name> • GPS 5m ago`
-  /// Falls back to a neutral string when no position has been sent yet.
-  static String _trackingNotificationBody() {
-    final loc = (_lastLocationName != null && _lastLocationName!.trim().isNotEmpty)
-        ? _lastLocationName!
-        : 'Tracking active';
-    if (_lastSentAt == null) return '$loc • waiting for GPS';
-    final age = DateTime.now().difference(_lastSentAt!);
-    if (age.inSeconds < 90) return '$loc • GPS just now';
-    if (age.inMinutes < 60) return '$loc • GPS ${age.inMinutes}m ago';
-    return '$loc • GPS ${age.inHours}h ago';
-  }
-
-  /// Re-post the persistent tracking notification under the same ID so iOS
-  /// updates the existing entry in Notification Center instead of stacking
-  /// a new one. `banner = true` only at journey start; subsequent updates
-  /// are silent (no alert/sound) so the driver isn't interrupted on every
-  /// position fix.
+  /// Show the persistent tracking notification ONCE at journey start so the
+  /// driver knows tracking is active. The Live Activity tile handles all
+  /// subsequent live updates (location name, GPS age) — re-posting this
+  /// notification under the same ID causes iOS to flash a banner every
+  /// time even with presentAlert:false, so we don't refresh it after start.
   static Future<void> _showTrackingNotification(String body, {bool banner = false}) async {
     await _notif.show(
       _iosTrackingNotifId,
@@ -86,12 +84,100 @@ class IosLocationService {
     );
   }
 
-  /// Silent notification refresh — same ID, no banner. Use after every
-  /// successful send (to show new location) and from the watchdog (so the
-  /// "GPS Xm ago" age keeps ticking and the driver can see the service is
-  /// alive even when the vehicle hasn't moved).
-  static Future<void> _refreshTrackingNotification() async {
-    await _showTrackingNotification(_trackingNotificationBody(), banner: false);
+  /// Build the LiveActivity payload for the current GPS position by reading
+  /// the active journey (pickup + next-drop) out of SharedPreferences and
+  /// computing the progress fraction from coordinates. Returns a map ready
+  /// to be passed to [LiveActivityService.start] / [LiveActivityService.update].
+  ///
+  /// Returns an empty map (no route fields) when no live journey is set —
+  /// the Swift UI then falls back to the simpler "Live tracking" layout.
+  static Future<_LiveActivityRouteData> _routeDataForLiveActivity(
+    Position currentPosition,
+  ) async {
+    final journey = await ActiveJourneyPrefs.read();
+    if (!journey.hasPickup || !journey.hasDrop) {
+      return _LiveActivityRouteData.empty(nextStop: journey.nextStopLabel);
+    }
+
+    // Distance pickup → current
+    final covered = Geolocator.distanceBetween(
+      journey.pickupLat!,
+      journey.pickupLng!,
+      currentPosition.latitude,
+      currentPosition.longitude,
+    );
+    // Straight-line distance current → drop (good enough for a progress
+    // bar; real road distance would need a routing API call on every fix).
+    final remaining = Geolocator.distanceBetween(
+      currentPosition.latitude,
+      currentPosition.longitude,
+      journey.dropLat!,
+      journey.dropLng!,
+    );
+    final total = covered + remaining;
+    final progress = total > 0 ? (covered / total).clamp(0.0, 1.0) : 0.0;
+
+    // Format remaining distance for the ETA chip:
+    //   < 1 km  → "850 m"
+    //   ≥ 1 km  → "5.2 km"
+    String etaText;
+    if (remaining < 50) {
+      etaText = 'Arriving';
+    } else if (remaining < 1000) {
+      etaText = '${remaining.toStringAsFixed(0)} m';
+    } else {
+      etaText = '${(remaining / 1000).toStringAsFixed(1)} km';
+    }
+
+    // Place each intermediate stop on the bar by its distance from pickup
+    // as a fraction of pickup→drop total. Skips stops with missing coords.
+    final pickupToDropMeters = Geolocator.distanceBetween(
+      journey.pickupLat!,
+      journey.pickupLng!,
+      journey.dropLat!,
+      journey.dropLng!,
+    );
+    final stops = <LiveActivityStop>[];
+    if (pickupToDropMeters > 0) {
+      // Skip any stop that's effectively at the final-drop coordinates —
+      // that one is already drawn as the destination pin endpoint, so a
+      // dot on top of it just looks like a smudge. 50 m tolerance.
+      bool isFinalDrop(ActiveJourneyStop s) {
+        final d = Geolocator.distanceBetween(
+          s.lat,
+          s.lng,
+          journey.dropLat!,
+          journey.dropLng!,
+        );
+        return d < 50;
+      }
+
+      for (final s in journey.stops) {
+        if (isFinalDrop(s)) continue;
+        final distFromPickup = Geolocator.distanceBetween(
+          journey.pickupLat!,
+          journey.pickupLng!,
+          s.lat,
+          s.lng,
+        );
+        final stopProgress =
+            (distFromPickup / pickupToDropMeters).clamp(0.0, 1.0);
+        stops.add(LiveActivityStop(
+          name: s.name,
+          progress: stopProgress,
+          status: s.status,
+        ));
+      }
+    }
+
+    return _LiveActivityRouteData(
+      pickupName: journey.pickupName,
+      dropName: journey.dropName,
+      progress: progress,
+      etaText: etaText,
+      nextStop: journey.nextStopLabel,
+      stops: stops,
+    );
   }
 
   /// Best-effort driver name read from SharedPreferences. Used only as a
@@ -112,62 +198,72 @@ class IosLocationService {
   }
 
   static Future<void> start() async {
-    if (_subscription != null) return;
-
-    await _notif.initialize(const InitializationSettings(
-      iOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
-    ));
-
-    await _showTrackingNotification('Tracking your delivery journey...', banner: true);
-
-    // Kick off the Live Activity tile. Defaults are placeholders — the first
-    // successful position send will overwrite them with the real coords +
-    // reverse-geocoded place name. No-op on iOS < 16.1 / Android.
-    final driverName = await _driverNameFromPrefs();
-    await LiveActivityService.start(
-      journeyId: DateTime.now().millisecondsSinceEpoch.toString(),
-      driverName: driverName,
-      latitude: 0,
-      longitude: 0,
-      locationName: 'Starting tracking…',
-    );
-
-    _subscription = Geolocator.getPositionStream(
-      locationSettings: AppleSettings(
-        accuracy: LocationAccuracy.best,
-        activityType: ActivityType.automotiveNavigation,
-        distanceFilter: 0,
-        pauseLocationUpdatesAutomatically: false,
-        allowBackgroundLocationUpdates: true,
-        showBackgroundLocationIndicator: true,
-      ),
-    ).listen(
-      _onPosition,
-      onError: (Object e) => print('IosLocationService: stream error: $e'),
-      cancelOnError: false,
-    );
-
-    // Tell AppDelegate to start native significant-location-changes watchdog
-    // so iOS can relaunch the app and post locations if it gets terminated.
+    // Hardened against concurrent callers. The outer guard catches the
+    // common case (already running). The _starting flag closes the race
+    // window between "passed the _subscription==null check" and "_subscription
+    // assigned" — without it, two awaits running in parallel would BOTH
+    // post the journey-start banner and arm two Geolocator streams.
+    if (_subscription != null || _starting) return;
+    _starting = true;
     try {
-      await _watchdog.invokeMethod('startWatchdog');
-    } catch (_) {}
+      await _notif.initialize(const InitializationSettings(
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
+      ));
 
-    // Start the Dart watchdog. Two jobs:
-    //   1. If the position stream has been silent for > _streamSilenceThreshold,
-    //      force a getCurrentPosition() poll so we recover from iOS quietly
-    //      pausing the stream on long screen-locks.
-    //   2. Refresh the persistent tracking notification body every tick so
-    //      "GPS Xm ago" keeps advancing — proves to the driver that the
-    //      service is alive even when the vehicle is stationary.
-    _watchdogTimer?.cancel();
-    _watchdogTimer = Timer.periodic(_watchdogInterval, (_) => _onWatchdogTick());
+      await _showTrackingNotification('Tracking your delivery journey...', banner: true);
 
-    print('IosLocationService: tracking started in main isolate');
+      // Kick off the Live Activity tile. Defaults are placeholders — the first
+      // successful position send will overwrite them with the real coords +
+      // reverse-geocoded place name. No-op on iOS < 16.1 / Android.
+      final driverName = await _driverNameFromPrefs();
+      await LiveActivityService.start(
+        journeyId: DateTime.now().millisecondsSinceEpoch.toString(),
+        driverName: driverName,
+        latitude: 0,
+        longitude: 0,
+        locationName: 'Starting tracking…',
+      );
+
+      _subscription = Geolocator.getPositionStream(
+        locationSettings: AppleSettings(
+          accuracy: LocationAccuracy.best,
+          activityType: ActivityType.automotiveNavigation,
+          distanceFilter: 0,
+          pauseLocationUpdatesAutomatically: false,
+          allowBackgroundLocationUpdates: true,
+          showBackgroundLocationIndicator: true,
+        ),
+      ).listen(
+        _onPosition,
+        onError: (Object e) => print('IosLocationService: stream error: $e'),
+        cancelOnError: false,
+      );
+
+      // Tell AppDelegate to start native significant-location-changes watchdog
+      // so iOS can relaunch the app and post locations if it gets terminated.
+      try {
+        await _watchdog.invokeMethod('startWatchdog');
+      } catch (_) {}
+
+      // Start the Dart watchdog. Job: if the position stream has been silent
+      // for > _streamSilenceThreshold, force a getCurrentPosition() poll so
+      // we recover from iOS quietly pausing the stream on long screen-locks.
+      //
+      // The watchdog no longer touches the tracking notification — the Live
+      // Activity tile is the live status indicator now. Re-posting the
+      // notification every minute (even with presentAlert:false) caused iOS
+      // to flash a banner on every refresh while the app was backgrounded.
+      _watchdogTimer?.cancel();
+      _watchdogTimer = Timer.periodic(_watchdogInterval, (_) => _onWatchdogTick());
+
+      print('IosLocationService: tracking started in main isolate');
+    } finally {
+      _starting = false;
+    }
   }
 
   static Future<void> stop() async {
@@ -185,6 +281,7 @@ class IosLocationService {
     _lastLocationName = null;
     _lastGeocodeAt = null;
     _lastGeocodePosition = null;
+    _lastNotificationLocationName = null;
     print('IosLocationService: stopped');
   }
 
@@ -216,10 +313,6 @@ class IosLocationService {
         print('📍 [iOS-LOC] Watchdog poll failed: $e');
       }
     }
-
-    // Always refresh the notification age so the driver sees the service
-    // is alive (e.g. "Madhapur • GPS 3m ago" instead of stale text).
-    await _refreshTrackingNotification();
   }
 
   static Future<void> _onPosition(Position position) async {
@@ -332,19 +425,37 @@ class IosLocationService {
         _lastSentAt = now;
         _lastSentPosition = position;
         await TrackingDatabase.markAllSent();
-        // Refresh the persistent notification so the driver sees the
-        // current location + "GPS just now" instead of the stale "Tracking
-        // your delivery journey..." text from journey start.
-        await _refreshTrackingNotification();
-        // Push the same fresh location into the Live Activity so the
-        // lock-screen + Dynamic Island tile updates in lock-step with the
-        // notification (and stays fresh after a swipe-kill SLC wakeup).
+        // Push the fresh location into the Live Activity tile so the
+        // lock-screen + Dynamic Island stay current. Also recompute the
+        // route bar (progress along pickup→drop) from the active-journey
+        // prefs so the truck icon slides along the bar as the driver
+        // moves; falls back to a simpler layout if no live journey is set.
+        final route = await _routeDataForLiveActivity(position);
         await LiveActivityService.update(
           latitude: position.latitude,
           longitude: position.longitude,
           locationName: locationName,
           lastSentAt: now,
+          nextStop: route.nextStop,
+          pickupName: route.pickupName,
+          dropName: route.dropName,
+          progress: route.progress,
+          etaText: route.etaText,
+          stops: route.stops,
         );
+        // Update the persistent tracking notification ONLY when the
+        // resolved place name actually changes (driver entered a new
+        // locality). This keeps the Notification Center entry meaningful
+        // for non-Dynamic-Island devices / iOS < 16.1 fallback, while
+        // limiting the banner flashes iOS fires on each update from
+        // ~1/min to ~1/stop. Skip the placeholder name so an unresolved
+        // geocode doesn't show a meaningless "Live vehicle location".
+        if (locationName.isNotEmpty &&
+            locationName != 'Live vehicle location' &&
+            locationName != _lastNotificationLocationName) {
+          _lastNotificationLocationName = locationName;
+          await _showTrackingNotification(locationName, banner: false);
+        }
         print('📍 [iOS-LOC] ✅ SENT lat=${position.latitude.toStringAsFixed(6)} '
             'lng=${position.longitude.toStringAsFixed(6)} acc=${position.accuracy.toStringAsFixed(0)}m → $locationName');
       } else {
@@ -356,4 +467,29 @@ class IosLocationService {
           'lng=${position.longitude.toStringAsFixed(6)}');
     }
   }
+}
+
+/// Snapshot of route-bar data passed into a single Live Activity update.
+/// Held as a value type so the call sites in `_onPosition` and `start()`
+/// can compute it once and pass the same fields to both `start` and
+/// `update` without recomputing or re-reading prefs.
+class _LiveActivityRouteData {
+  _LiveActivityRouteData({
+    this.pickupName,
+    this.dropName,
+    this.progress = 0,
+    this.etaText,
+    this.nextStop,
+    this.stops = const [],
+  });
+
+  factory _LiveActivityRouteData.empty({String? nextStop}) =>
+      _LiveActivityRouteData(nextStop: nextStop);
+
+  final String? pickupName;
+  final String? dropName;
+  final double progress;
+  final String? etaText;
+  final String? nextStop;
+  final List<LiveActivityStop> stops;
 }
