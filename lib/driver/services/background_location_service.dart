@@ -423,7 +423,12 @@ Future<void> _onStart(ServiceInstance service) async {
   // Connectivity check helper
   Future<bool> hasInternetConnectivity() async {
     try {
-      final result = await InternetAddress.lookup('google.com')
+      // Probe our OWN backend host, not google.com. Some networks (regional
+      // blocks, corporate/captive WiFi) fail to resolve google.com even when
+      // the app's API is perfectly reachable — that produced false "offline"
+      // states on some devices. What matters is whether WE can reach our server.
+      final host = Uri.parse(_baseUrl).host;
+      final result = await InternetAddress.lookup(host)
           .timeout(const Duration(seconds: 5));
       return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
     } catch (_) {
