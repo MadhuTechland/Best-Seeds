@@ -76,6 +76,29 @@ class ApiClient {
     Get.offAllNamed(AppRoutes.login);
   }
 
+  /// Run an HTTP call with 2 retries and exponential backoff (1.5 s, 3 s) on
+  /// transient network faults. Only SocketException and http.ClientException
+  /// are retried — those are the classes covering WiFi↔mobile handoff, cold
+  /// TLS handshake, DNS timeouts, and socket resets by middleboxes. If the
+  /// third attempt still fails the exception propagates unchanged so the
+  /// caller's outer catch can map it to a user-facing message.
+  Future<http.Response> _sendWithRetry(
+    Future<http.Response> Function() send,
+  ) async {
+    const delays = [Duration(milliseconds: 1500), Duration(milliseconds: 3000)];
+    for (var attempt = 0; attempt < delays.length; attempt++) {
+      try {
+        return await send();
+      } on SocketException catch (e) {
+        print('API CLIENT: retry ${attempt + 1} after SocketException -> $e');
+      } on http.ClientException catch (e) {
+        print('API CLIENT: retry ${attempt + 1} after ClientException -> $e');
+      }
+      await Future.delayed(delays[attempt]);
+    }
+    return await send();
+  }
+
   /// Force logout when admin deactivates the vendor/driver account
   void _handleAccountDeactivated(String message) {
     print('API CLIENT: Account deactivated — forcing logout');
@@ -133,16 +156,13 @@ class ApiClient {
     // Both classes of transient failure resolve on retry after ~1.5 s. The
     // "No internet" toast and the "session expired" logout were both the
     // same underlying network-hiccup symptom before this guard was added.
+    // Two-retry backoff (1.5 s, then 3 s) for transient network faults.
+    // Covers WiFi↔mobile handoff, cold-start TLS to origin, dual-stack
+    // IPv6→IPv4 fallback, brief socket teardown by middleboxes — all of
+    // which routinely exceed a single 1.5 s window. Only SocketException
+    // and ClientException are retried; everything else bubbles up immediately.
     try {
-      try {
-        response = await doHttp();
-      } on SocketException {
-        await Future.delayed(const Duration(milliseconds: 1500));
-        response = await doHttp();
-      } on http.ClientException {
-        await Future.delayed(const Duration(milliseconds: 1500));
-        response = await doHttp();
-      }
+      response = await _sendWithRetry(doHttp);
 
       // Network-transition guard: retry ONCE on 401 with a token present.
       //
@@ -152,29 +172,29 @@ class ApiClient {
       // a transient 401 can come back from an intermediary instead of our
       // server — treating that as "token revoked" and immediately kicking
       // the driver to the login screen is the bug the driver reported.
-      //
-      // 1.5 s delay is long enough for iOS/Android to finish the handoff
-      // (usually completes in < 500 ms) but short enough that a real
-      // revoked-token 401 still logs out in < 2 s total.
       if (response.statusCode == 401 && token != null) {
         await Future.delayed(const Duration(milliseconds: 1500));
         try {
           final retry = await doHttp();
           response = retry;
         } catch (_) {
-          // Network still unstable — surface as a network error rather
-          // than logging out. Driver keeps their session; next attempt
-          // will typically succeed once WiFi finishes attaching.
           throw Exception('Network issue during request. Please try again.');
         }
       }
-    } on SocketException {
+    } on SocketException catch (e) {
+      print('API CLIENT: SocketException -> $e');
       throw Exception('No internet connection. Please check your network and try again.');
-    } on TimeoutException {
+    } on HandshakeException catch (e) {
+      print('API CLIENT: HandshakeException -> $e');
+      throw Exception('Secure connection failed. Please try again.');
+    } on TimeoutException catch (e) {
+      print('API CLIENT: TimeoutException -> $e');
       throw Exception('Request timed out. Please try again.');
-    } on http.ClientException {
-      throw Exception('No internet connection. Please check your network and try again.');
-    } on FormatException {
+    } on http.ClientException catch (e) {
+      print('API CLIENT: ClientException -> $e');
+      throw Exception('Connection issue. Please try again.');
+    } on FormatException catch (e) {
+      print('API CLIENT: FormatException -> $e');
       throw Exception('Invalid server response. Please try again later.');
     }
 
@@ -282,19 +302,12 @@ class ApiClient {
 
     http.Response response;
 
-    // Same retry-once behaviour as request(): network hiccups AND transient
-    // 401s both get a second attempt after a 1.5 s delay. Uploads are safe
-    // to retry because a 401 means the server rejected before storage.
+    // Same 2-retry backoff as request() for transient network faults.
+    // Uploads are safe to retry: server never persists partial state before
+    // the request completes, and a 401 means the auth layer rejected before
+    // any storage write happened.
     try {
-      try {
-        response = await doMultipart();
-      } on SocketException {
-        await Future.delayed(const Duration(milliseconds: 1500));
-        response = await doMultipart();
-      } on http.ClientException {
-        await Future.delayed(const Duration(milliseconds: 1500));
-        response = await doMultipart();
-      }
+      response = await _sendWithRetry(doMultipart);
       if (response.statusCode == 401 && token != null) {
         await Future.delayed(const Duration(milliseconds: 1500));
         try {
@@ -303,13 +316,20 @@ class ApiClient {
           throw Exception('Network issue during upload. Please try again.');
         }
       }
-    } on SocketException {
+    } on SocketException catch (e) {
+      print('API CLIENT MULTIPART: SocketException -> $e');
       throw Exception('No internet connection. Please check your network and try again.');
-    } on TimeoutException {
+    } on HandshakeException catch (e) {
+      print('API CLIENT MULTIPART: HandshakeException -> $e');
+      throw Exception('Secure connection failed. Please try again.');
+    } on TimeoutException catch (e) {
+      print('API CLIENT MULTIPART: TimeoutException -> $e');
       throw Exception('Request timed out. Please try again.');
-    } on http.ClientException {
-      throw Exception('No internet connection. Please check your network and try again.');
-    } on FormatException {
+    } on http.ClientException catch (e) {
+      print('API CLIENT MULTIPART: ClientException -> $e');
+      throw Exception('Connection issue. Please try again.');
+    } on FormatException catch (e) {
+      print('API CLIENT MULTIPART: FormatException -> $e');
       throw Exception('Invalid server response. Please try again later.');
     }
 

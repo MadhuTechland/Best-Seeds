@@ -1257,22 +1257,33 @@ class _DriverDashboardState extends State<DriverDashboard>
                       ),
                     ),
                     if (route.firstDeliveryDatetime != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0077C8).withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          DateFormat('dd MMM, hh:mm a')
-                              .format(route.firstDeliveryDatetime!),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF0077C8),
-                          ),
-                        ),
+                      Builder(
+                        builder: (_) {
+                          final dt = route.firstDeliveryDatetime!;
+                          // Midnight means "date only was captured, no real
+                          // time" — show just the date instead of a
+                          // misleading "12:00 AM".
+                          final hasTime = dt.hour != 0 || dt.minute != 0;
+                          final label = hasTime
+                              ? DateFormat('dd MMM, hh:mm a').format(dt)
+                              : DateFormat('dd MMM').format(dt);
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0077C8).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              label,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF0077C8),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                   ],
                 ),

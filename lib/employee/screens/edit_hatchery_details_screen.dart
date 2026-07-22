@@ -179,6 +179,12 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     return DateFormat('yyyy-MM-dd').format(date);
   }
 
+  /// Full datetime format for backend fields that must carry a real time
+  /// (delivery_datetime) — so the driver app doesn't display midnight.
+  String _formatDateTimeForApi(DateTime date) {
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(date);
+  }
+
   @override
   void dispose() {
     _piecesController.dispose();
@@ -251,8 +257,26 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
       },
     );
     if (picked != null) {
+      // Also prompt for a time so the driver sees the real expected delivery
+      // moment instead of "12:00 AM". Cancelling the time picker keeps the
+      // existing time (or midnight for a fresh date).
+      final existing = _expectedDeliveryDate;
+      final initialTime = existing != null
+          ? TimeOfDay(hour: existing.hour, minute: existing.minute)
+          : TimeOfDay.now();
+      if (!mounted) return;
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: initialTime,
+      );
       setState(() {
-        _expectedDeliveryDate = picked;
+        _expectedDeliveryDate = DateTime(
+          picked.year,
+          picked.month,
+          picked.day,
+          pickedTime?.hour ?? existing?.hour ?? 0,
+          pickedTime?.minute ?? existing?.minute ?? 0,
+        );
       });
     }
   }
@@ -333,7 +357,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
             _preferredDate != null ? _formatDateForApi(_preferredDate!) : '',
         travelCost: travelCostText,
         expectedDeliveryDate: _expectedDeliveryDate != null
-            ? _formatDateForApi(_expectedDeliveryDate!)
+            ? _formatDateTimeForApi(_expectedDeliveryDate!)
             : '',
         bookingDescription: _bookingDescriptionController.text.isNotEmpty
             ? _bookingDescriptionController.text
@@ -476,13 +500,14 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                     ],
                     */
 
-                    /// Expected Delivery Date with calendar
+                    /// Expected Delivery Date + Time
                     _buildDateField(
                       width,
                       height,
-                      'Expected Delivery Date',
+                      'Expected Delivery Date & Time',
                       _expectedDeliveryDate,
                       _selectExpectedDeliveryDate,
+                      showTime: true,
                     ),
                     SizedBox(height: height * 0.025),
 
@@ -952,8 +977,18 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     double height,
     String label,
     DateTime? selectedDate,
-    VoidCallback onTap,
-  ) {
+    VoidCallback onTap, {
+    bool showTime = false,
+  }) {
+    String labelFor(DateTime dt) {
+      // Show time only when we actually captured one (non-midnight),
+      // otherwise fall back to date-only to avoid a misleading "12:00 AM".
+      if (showTime && (dt.hour != 0 || dt.minute != 0)) {
+        return DateFormat('dd MMM yyyy, hh:mm a').format(dt);
+      }
+      return _formatDate(dt);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -982,8 +1017,8 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                 Expanded(
                   child: Text(
                     selectedDate != null
-                        ? _formatDate(selectedDate)
-                        : 'Select date',
+                        ? labelFor(selectedDate)
+                        : (showTime ? 'Select date & time' : 'Select date'),
                     style: TextStyle(
                       fontSize: width * 0.04,
                       color: selectedDate != null
