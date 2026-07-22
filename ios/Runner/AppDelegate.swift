@@ -79,7 +79,12 @@ import CoreLocation
             latitude: args["latitude"] as? Double ?? 0,
             longitude: args["longitude"] as? Double ?? 0,
             lastSentAtEpoch: args["lastSentAtEpoch"] as? Double ?? Date().timeIntervalSince1970,
-            nextStop: args["nextStop"] as? String
+            nextStop: args["nextStop"] as? String,
+            pickupName: args["pickupName"] as? String,
+            dropName: args["dropName"] as? String,
+            progress: args["progress"] as? Double ?? 0,
+            etaText: args["etaText"] as? String,
+            stops: args["stops"] as? [[String: Any]]
           )
           result(nil)
         case "update":
@@ -88,7 +93,12 @@ import CoreLocation
             latitude: args["latitude"] as? Double ?? 0,
             longitude: args["longitude"] as? Double ?? 0,
             lastSentAtEpoch: args["lastSentAtEpoch"] as? Double ?? Date().timeIntervalSince1970,
-            nextStop: args["nextStop"] as? String
+            nextStop: args["nextStop"] as? String,
+            pickupName: args["pickupName"] as? String,
+            dropName: args["dropName"] as? String,
+            progress: args["progress"] as? Double ?? 0,
+            etaText: args["etaText"] as? String,
+            stops: args["stops"] as? [[String: Any]]
           )
           result(nil)
         default:
@@ -188,13 +198,21 @@ import CoreLocation
     // Keep the lock-screen tile fresh even when Flutter is dead — this is
     // the swipe-kill recovery path. The activity stays alive for up to ~8 h
     // after being started, so as long as journeys end before that the user
-    // sees a live tile across the entire delivery.
+    // sees a live tile across the entire delivery. We don't know the
+    // current journey's pickup/drop/progress at the native level — pass
+    // nil so the Live Activity falls back to its simpler layout for these
+    // intermediate updates. Flutter overwrites with full data on next boot.
     BestseedLiveActivityManager.shared.update(
       locationName: "Live vehicle location",
       latitude: loc.coordinate.latitude,
       longitude: loc.coordinate.longitude,
       lastSentAtEpoch: Date().timeIntervalSince1970,
-      nextStop: nil
+      nextStop: nil,
+      pickupName: nil,
+      dropName: nil,
+      progress: 0,
+      etaText: nil,
+      stops: nil
     )
   }
 

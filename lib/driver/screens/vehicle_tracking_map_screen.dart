@@ -2855,9 +2855,16 @@ for (var stop in stops) {
 
   String _formatDateTime(String? dateTimeStr) {
     if (dateTimeStr == null || dateTimeStr.isEmpty) return '-';
+    // A date-only value (e.g. "2026-07-21") carries no real clock time; parsing
+    // it yields midnight and would render a misleading "12:00 AM" default. Only
+    // format when the source actually has a time component — otherwise the
+    // caller shows the real start time (in_progress_at) or nothing.
+    if (!dateTimeStr.contains(':')) return '-';
     try {
       final dateTime = DateTime.parse(dateTimeStr);
-      final hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
+      final hour = dateTime.hour > 12
+          ? dateTime.hour - 12
+          : (dateTime.hour == 0 ? 12 : dateTime.hour);
       final amPm = dateTime.hour >= 12 ? 'PM' : 'AM';
       return '${hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')} $amPm';
     } catch (e) {

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bestseeds/driver/service/auth_service.dart';
 import 'package:bestseeds/driver/services/driver_storage_service.dart';
+import 'package:bestseeds/routes/app_constants.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
@@ -104,14 +105,24 @@ class TrackingAlertService {
 
   /// Returns the issue type string or null if everything is normal.
   static Future<String?> _detectIssue(SharedPreferences prefs) async {
-    // 1. Check internet connectivity
+    // 1. Check internet connectivity.
+    // connectivity_plus reporting ConnectivityResult.none is unreliable on some
+    // OEM builds (Xiaomi/Realme/Vivo battery management, VPNs, or an unusual
+    // active interface) — it can say "none" while mobile data actually works,
+    // which is what made some phones show a false "No internet connection". So
+    // we only flag 'no_internet' when a real reachability probe to our own
+    // backend ALSO fails. A thrown error while reading connectivity is
+    // inconclusive (not proof of being offline), so we don't flag it either.
     try {
       final connectivity = await Connectivity().checkConnectivity();
       if (connectivity.contains(ConnectivityResult.none)) {
-        return 'no_internet';
+        final reachable = await _isBackendReachable();
+        if (!reachable) {
+          return 'no_internet';
+        }
       }
     } catch (_) {
-      return 'no_internet';
+      // Inconclusive — do not report offline on a connectivity read error.
     }
 
     // 2. Check if location service (GPS hardware) is enabled
@@ -164,5 +175,20 @@ class TrackingAlertService {
     }
 
     return null; // all good
+  }
+
+  /// Real reachability probe: can this device actually resolve/reach OUR
+  /// backend? Used to confirm a suspected offline state before flagging it,
+  /// so a misreporting connectivity_plus result doesn't raise a false
+  /// "No internet connection" alert.
+  static Future<bool> _isBackendReachable() async {
+    try {
+      final host = Uri.parse(AppConstants.baseUrl).host;
+      final result = await InternetAddress.lookup(host)
+          .timeout(const Duration(seconds: 5));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
   }
 }

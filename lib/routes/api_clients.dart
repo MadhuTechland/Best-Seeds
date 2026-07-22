@@ -104,37 +104,69 @@ class ApiClient {
       if (token != null) 'Authorization': 'Bearer $token',
     };
 
-    http.Response response;
-
-    try {
+    Future<http.Response> doHttp() async {
       switch (method.toUpperCase()) {
         case 'GET':
-          response = await http.get(
-            Uri.parse(url),
-            headers: headers,
-          ).timeout(const Duration(seconds: 30));
-          break;
+          return http.get(Uri.parse(url), headers: headers)
+              .timeout(const Duration(seconds: 30));
         case 'PUT':
-          response = await http.put(
-            Uri.parse(url),
-            headers: headers,
-            body: jsonEncode(body),
-          ).timeout(const Duration(seconds: 30));
-          break;
+          return http.put(Uri.parse(url), headers: headers, body: jsonEncode(body))
+              .timeout(const Duration(seconds: 30));
         case 'DELETE':
-          response = await http.delete(
-            Uri.parse(url),
-            headers: headers,
-          ).timeout(const Duration(seconds: 30));
-          break;
+          return http.delete(Uri.parse(url), headers: headers)
+              .timeout(const Duration(seconds: 30));
         case 'POST':
         default:
-          response = await http.post(
-            Uri.parse(url),
-            headers: headers,
-            body: jsonEncode(body),
-          ).timeout(const Duration(seconds: 30));
-          break;
+          return http.post(Uri.parse(url), headers: headers, body: jsonEncode(body))
+              .timeout(const Duration(seconds: 30));
+      }
+    }
+
+    http.Response response;
+
+    // Perform the HTTP call with retry-once on any of:
+    //   - SocketException / http.ClientException — brief network hiccup
+    //     (mobile↔WiFi handoff, DNS timeout, socket teardown)
+    //   - 401 with token present — transient auth 401 from a middlebox
+    //     during the handoff (see network-transition comment below)
+    //
+    // Both classes of transient failure resolve on retry after ~1.5 s. The
+    // "No internet" toast and the "session expired" logout were both the
+    // same underlying network-hiccup symptom before this guard was added.
+    try {
+      try {
+        response = await doHttp();
+      } on SocketException {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        response = await doHttp();
+      } on http.ClientException {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        response = await doHttp();
+      }
+
+      // Network-transition guard: retry ONCE on 401 with a token present.
+      //
+      // A 401 from our backend means auth failed and no side effects were
+      // applied server-side, so retrying is safe. During a mobile ↔ WiFi
+      // handoff (or on WiFi networks with captive-portal / proxy middleboxes),
+      // a transient 401 can come back from an intermediary instead of our
+      // server — treating that as "token revoked" and immediately kicking
+      // the driver to the login screen is the bug the driver reported.
+      //
+      // 1.5 s delay is long enough for iOS/Android to finish the handoff
+      // (usually completes in < 500 ms) but short enough that a real
+      // revoked-token 401 still logs out in < 2 s total.
+      if (response.statusCode == 401 && token != null) {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        try {
+          final retry = await doHttp();
+          response = retry;
+        } catch (_) {
+          // Network still unstable — surface as a network error rather
+          // than logging out. Driver keeps their session; next attempt
+          // will typically succeed once WiFi finishes attaching.
+          throw Exception('Network issue during request. Please try again.');
+        }
       }
     } on SocketException {
       throw Exception('No internet connection. Please check your network and try again.');
@@ -229,27 +261,48 @@ class ApiClient {
     print('API CLIENT MULTIPART: URL -> $url');
     print('API CLIENT MULTIPART: FIELDS -> $fields');
 
-    final request = http.MultipartRequest('POST', Uri.parse(url));
-
-    request.headers.addAll({
-      'Accept': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    });
-
-    request.fields.addAll(fields);
-
-    if (imageFile != null) {
-      print('API CLIENT MULTIPART: Adding image file');
-      request.files.add(
-        await http.MultipartFile.fromPath(imageFieldName, imageFile.path),
-      );
+    // Build fresh MultipartRequest on each attempt — http.MultipartRequest
+    // is single-use (files are stream-consumed on send), so we can't reuse
+    // the same instance for a retry.
+    Future<http.Response> doMultipart() async {
+      final req = http.MultipartRequest('POST', Uri.parse(url));
+      req.headers.addAll({
+        'Accept': 'application/json',
+        if (token != null) 'Authorization': 'Bearer $token',
+      });
+      req.fields.addAll(fields);
+      if (imageFile != null) {
+        req.files.add(
+          await http.MultipartFile.fromPath(imageFieldName, imageFile.path),
+        );
+      }
+      final streamed = await req.send().timeout(const Duration(seconds: 60));
+      return http.Response.fromStream(streamed);
     }
 
     http.Response response;
 
+    // Same retry-once behaviour as request(): network hiccups AND transient
+    // 401s both get a second attempt after a 1.5 s delay. Uploads are safe
+    // to retry because a 401 means the server rejected before storage.
     try {
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 60));
-      response = await http.Response.fromStream(streamedResponse);
+      try {
+        response = await doMultipart();
+      } on SocketException {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        response = await doMultipart();
+      } on http.ClientException {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        response = await doMultipart();
+      }
+      if (response.statusCode == 401 && token != null) {
+        await Future.delayed(const Duration(milliseconds: 1500));
+        try {
+          response = await doMultipart();
+        } catch (_) {
+          throw Exception('Network issue during upload. Please try again.');
+        }
+      }
     } on SocketException {
       throw Exception('No internet connection. Please check your network and try again.');
     } on TimeoutException {

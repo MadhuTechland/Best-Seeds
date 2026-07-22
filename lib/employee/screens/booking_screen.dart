@@ -1140,26 +1140,6 @@ class _BookingScreenState extends State<BookingScreen> {
               ],
             ),
 
-          // Preferred Delivery Date - blue calendar
-          if ((booking.deliveryDate != null && booking.deliveryDate!.isNotEmpty) ||
-              (booking.deliveryDatetime != null && booking.deliveryDatetime!.isNotEmpty)) ...[
-            SizedBox(height: height * 0.01),
-            Row(
-              children: [
-                Icon(Icons.event,
-                    size: width * 0.04, color: Colors.blue),
-                SizedBox(width: width * 0.02),
-                Text(
-                  'Pref. Delivery: ${(booking.deliveryDate != null && booking.deliveryDate!.isNotEmpty) ? booking.deliveryDate! : booking.deliveryDatetime!}',
-                  style: TextStyle(
-                    fontSize: width * 0.038,
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ],
 
           // Start location - green
           if (booking.driverDetails.vehicleStartAddress != null &&
