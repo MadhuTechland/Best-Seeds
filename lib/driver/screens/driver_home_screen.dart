@@ -103,6 +103,134 @@ class _DriverDashboardState extends State<DriverDashboard>
     await Permission.notification.request();
   }
 
+  /// Verify iOS background-tracking prerequisites. Called from _startJourney.
+  ///
+  /// iOS has no Doze equivalent — CLLocationManager with the `location`
+  /// background mode + Always permission keeps ticking on a locked phone.
+  /// What silently breaks tracking on iOS is the driver's settings drifting:
+  ///
+  ///   • "When in Use" instead of "Always" — background updates stop the
+  ///     instant the app is backgrounded.
+  ///   • Precise Location OFF (iOS 14+) — accuracy drops to ~1-3 km.
+  ///   • Background App Refresh OFF — swipe-killed apps aren't relaunched
+  ///     for SLC events.
+  ///   • Low Power Mode ON — background execution is throttled.
+  ///
+  /// The first two are blocking (tracking will not survive) and open Settings.
+  /// The last two are non-blocking warnings the driver can dismiss.
+  Future<void> _ensureIosTrackingPrerequisites() async {
+    if (!Platform.isIOS) return;
+
+    // 1. Always Location — non-negotiable. Prompt every trip if not granted:
+    // this one silently kills background tracking so we can't take a
+    // "don't nag" shortcut here.
+    final always = await BackgroundLocationService.isAlwaysAuthorized();
+    if (!always && mounted) {
+      final shouldOpen = await _showPermissionDialog(
+        title: 'Always Allow Location',
+        message:
+            'To keep live tracking running when the app is not on screen (locked phone, other apps in foreground) please change Location access for "Drive Bestseed" to Always.\n\n'
+            'Right now background updates will stop as soon as you switch to another app or lock the phone.',
+        icon: Icons.my_location_rounded,
+        iconColor: const Color(0xFF0077C8),
+      );
+      if (shouldOpen) {
+        await BackgroundLocationService.openIosLocationSettings();
+      }
+    }
+
+    // 2. Precise Location — also blocking. Approximate location reports lat/lng
+    // within a 1-3 km radius, which is useless for vehicle tracking.
+    final precise = await BackgroundLocationService.isPreciseLocationGranted();
+    if (!precise && mounted) {
+      final shouldOpen = await _showPermissionDialog(
+        title: 'Turn On Precise Location',
+        message:
+            'Precise Location is OFF, so we can only see your approximate area (~1-3 km). The customer marker will jump around and be useless.\n\n'
+            'Please enable Precise Location for "Drive Bestseed" in Settings.',
+        icon: Icons.gps_fixed_rounded,
+        iconColor: const Color(0xFF0077C8),
+      );
+      if (shouldOpen) {
+        await BackgroundLocationService.openIosLocationSettings();
+      }
+    }
+
+    // 3. Background App Refresh — degrades but doesn't kill tracking.
+    // Prompt once per install so we don't nag on every journey.
+    final refreshOk =
+        await BackgroundLocationService.isBackgroundRefreshAvailable();
+    if (!refreshOk && mounted) {
+      final prefs = await SharedPreferences.getInstance();
+      final asked = prefs.getBool('ios_bar_prompted') ?? false;
+      if (!asked) {
+        final shouldOpen = await _showPermissionDialog(
+          title: 'Enable Background App Refresh',
+          message:
+              'Background App Refresh is OFF. If Drive Bestseed is force-closed during a delivery, iOS won\'t be able to relaunch it to resume tracking.\n\n'
+              'Please enable Background App Refresh in Settings.',
+          icon: Icons.refresh_rounded,
+          iconColor: const Color(0xFF0077C8),
+        );
+        await prefs.setBool('ios_bar_prompted', true);
+        if (shouldOpen) {
+          await BackgroundLocationService.openIosLocationSettings();
+        }
+      }
+    }
+
+    // 4. Low Power Mode — non-blocking, session-scoped warning via snackbar.
+    // We don't push the driver anywhere; they may need Low Power Mode for
+    // their own reasons (long journey, low battery). Just make it visible.
+    final lowPower = await BackgroundLocationService.isIosLowPowerModeEnabled();
+    if (lowPower && mounted) {
+      AppSnackbar.error(
+        'Low Power Mode is ON — tracking updates may slow down. Consider disabling it for the journey.',
+      );
+    }
+  }
+
+  /// Nudge the driver to whitelist Drive Bestseed in the OEM's autostart /
+  /// protected-apps screen. Shown once per install on aggressive ROMs
+  /// (Xiaomi MIUI, Vivo Funtouch, Oppo/Realme ColorOS, OnePlus, Huawei,
+  /// Samsung, Asus, Meizu, Lenovo).
+  ///
+  /// WHY: these OEMs ship their own battery managers that kill foreground
+  /// services independent of Google's Doze/battery-opt rules. A native
+  /// PARTIAL_WAKE_LOCK + battery-opt exemption is not enough — the driver
+  /// must also enable the app in the OEM's whitelist. This is a UI-only
+  /// remedy; there is no API for us to grant it on the user's behalf.
+  Future<void> _promptOemAutoStartWhitelist() async {
+    if (!Platform.isAndroid) return;
+
+    final isAggressive = await BackgroundLocationService.isAggressiveOem();
+    if (!isAggressive) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final alreadyPrompted = prefs.getBool('oem_autostart_prompted') ?? false;
+    if (alreadyPrompted) return;
+
+    if (!mounted) return;
+
+    final shouldOpen = await _showPermissionDialog(
+      title: 'Allow Autostart',
+      message:
+          'Your phone can stop background apps and interrupt live truck tracking during long journeys.\n\n'
+          'Please enable Autostart / Background running for "Drive Bestseed" in the settings screen we are about to open.',
+      icon: Icons.rocket_launch_rounded,
+      iconColor: const Color(0xFF0077C8),
+    );
+
+    // Mark prompted regardless — OEM whitelist can't be re-verified via API,
+    // so we can't re-ask. If the driver hits tracking issues later they can
+    // still open the screen manually from Settings.
+    await prefs.setBool('oem_autostart_prompted', true);
+
+    if (!shouldOpen) return;
+
+    await BackgroundLocationService.openOemAutoStartSettings();
+  }
+
   Future<bool> _ensureBatteryOptimizationExemption() async {
     if (!Platform.isAndroid) return true;
 
@@ -1257,33 +1385,21 @@ class _DriverDashboardState extends State<DriverDashboard>
                       ),
                     ),
                     if (route.firstDeliveryDatetime != null)
-                      Builder(
-                        builder: (_) {
-                          final dt = route.firstDeliveryDatetime!;
-                          // Midnight means "date only was captured, no real
-                          // time" — show just the date instead of a
-                          // misleading "12:00 AM".
-                          final hasTime = dt.hour != 0 || dt.minute != 0;
-                          final label = hasTime
-                              ? DateFormat('dd MMM, hh:mm a').format(dt)
-                              : DateFormat('dd MMM').format(dt);
-                          return Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF0077C8).withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              label,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF0077C8),
-                              ),
-                            ),
-                          );
-                        },
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0077C8).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          DateFormat('dd MMMM, yyyy').format(route.firstDeliveryDatetime!),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF0077C8),
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -1814,6 +1930,28 @@ class _DriverDashboardState extends State<DriverDashboard>
     // ── Request background-location & notification permissions ──
     final permissionGranted = await _ensureLocationPermissions();
     if (!permissionGranted) return;
+
+    // ── Nudge the driver to disable battery optimization ──
+    // The native PARTIAL_WAKE_LOCK acquired by BackgroundLocationService.start
+    // is what actually keeps the journey alive under Doze; battery-opt
+    // exemption is a defence-in-depth layer against OEM battery managers
+    // (Xiaomi MIUI, Oppo ColorOS, Vivo Funtouch) that override Google's rules.
+    // _ensureBatteryOptimizationExemption self-guards to once-per-install so
+    // it's safe to call on every journey start.
+    await _ensureBatteryOptimizationExemption();
+
+    // ── Nudge the driver to whitelist us in the OEM's autostart list ──
+    // On Xiaomi/Vivo/Oppo/Realme/OnePlus/Huawei/Samsung the OEM's own battery
+    // manager kills FGSes even with a wake lock + battery-opt exemption. This
+    // opens the OEM-specific autostart screen so the driver can whitelist us
+    // in one tap. Self-guards to once-per-install and only fires on aggressive
+    // ROMs, so it's safe to call on every journey start.
+    await _promptOemAutoStartWhitelist();
+
+    // ── iOS-equivalent guards: Always/Precise/BackgroundRefresh/LowPower ──
+    // No-op on Android. iOS has no Doze but has its own set of settings that
+    // silently kill background tracking when drifted from the required values.
+    await _ensureIosTrackingPrerequisites();
 
     bool loadingDialogShown = false;
     try {

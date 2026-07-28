@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:bestseeds/driver/controllers/driver_auth_controller.dart';
 import 'package:bestseeds/employee/screens/login_screens/employee_login_screen.dart';
 import 'package:bestseeds/screens/privacy_policy_screen.dart';
 import 'package:bestseeds/screens/terms_and_conditions_screen.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:smart_auth/smart_auth.dart';
 
 class DriverLoginScreen extends StatefulWidget {
   const DriverLoginScreen({super.key});
@@ -41,6 +45,34 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
         _isValidMobile = isValid;
       });
     }
+  }
+
+  /// Register a fresh SMS Retriever subscription right before the OTP request
+  /// leaves the app. Google Play Services will deliver the incoming SMS
+  /// (matching our app hash) to whichever subscription is active at the
+  /// moment the message arrives — so registering earlier than sendOtp gives
+  /// us the widest window and avoids losing a fast-delivered SMS.
+  Future<void> _primeSmsRetriever() async {
+    final smart = SmartAuth.instance;
+    // One-time debug: print the hash the CURRENTLY-INSTALLED APK reports.
+    // Must match the DLT template suffix (ATdoAuJ3d8y) — mismatch here is the
+    // #1 cause of "auto-read doesn't work" on debug builds.
+    if (kDebugMode) {
+      final sig = await smart.getAppSignature();
+      debugPrint('SMS App Signature (this APK): ${sig.data}');
+    }
+    // Reset any stale value from a previous login attempt.
+    controller.autofilledOtp.value = '';
+    // Fire-and-forget: when the SMS arrives Google hands it back here.
+    // Not awaited so the send-OTP call proceeds in parallel.
+    unawaited(smart
+        .getSmsWithRetrieverApi(matcher: r'\d{6}')
+        .then((res) {
+      final code = res.hasData ? res.data?.code : null;
+      if (code != null && code.length == 6) {
+        controller.autofilledOtp.value = code;
+      }
+    }));
   }
 
   @override
@@ -294,6 +326,13 @@ class _DriverLoginScreenState extends State<DriverLoginScreen> {
                                           : () {
                                               final mobile =
                                                   mobileCtrl.text.trim();
+                                              // Start the SMS Retriever
+                                              // listener BEFORE the OTP is
+                                              // sent — Google's API is
+                                              // register-then-receive, so if
+                                              // the SMS lands before the
+                                              // listener is up we lose it.
+                                              _primeSmsRetriever();
                                               controller.sendOtp(mobile);
                                             },
                                   style: ElevatedButton.styleFrom(

@@ -42,7 +42,11 @@ Future<void> _showBackgroundNotification(RemoteMessage message) async {
           AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(_highImportanceChannel);
 
-  const details = NotificationDetails(
+  // BigTextStyle so multi-line bodies (e.g. "New Booking received" with
+  // booking id / booked by / hatchery name on separate lines) render every
+  // line when the user expands the notification instead of being cropped to
+  // one line by the system tray.
+  final details = NotificationDetails(
     android: AndroidNotificationDetails(
       'high_importance_channel',
       'High Importance Notifications',
@@ -50,8 +54,9 @@ Future<void> _showBackgroundNotification(RemoteMessage message) async {
       importance: Importance.max,
       priority: Priority.high,
       showWhen: true,
+      styleInformation: BigTextStyleInformation(body ?? ''),
     ),
-    iOS: DarwinNotificationDetails(
+    iOS: const DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,

@@ -69,6 +69,182 @@ const double _reverseGeocodeRefreshMeters = 300;  // was 400 m — refresh after
 class BackgroundLocationService {
   static final FlutterBackgroundService _service = FlutterBackgroundService();
 
+  /// Native MethodChannel to hold a real Android PARTIAL_WAKE_LOCK for the
+  /// journey. See [WakeLockManager] on the Kotlin side.
+  ///
+  /// This is a CPU wake lock — the OS-level primitive Doze checks before it
+  /// suspends the process. `wakelock_plus` (the old approach) only kept the
+  /// Dart isolate scheduled; it did nothing against Doze deep sleep, which is
+  /// why location updates stopped after ~1 hour of screen-off and resumed on
+  /// unlock. The native lock survives Doze and keeps the Dart isolate ticking
+  /// for the entire trip.
+  static const MethodChannel _deviceChannel =
+      MethodChannel('bestseeds/device_info');
+
+  /// Acquire the native CPU wake lock. Safe to call multiple times.
+  /// Returns false only when the native side threw; falsy result should NOT
+  /// block the journey — the WorkManager backup + battery-opt exemption can
+  /// still get most updates through, but log it prominently.
+  static Future<bool> _acquireNativeWakeLock() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final ok = await _deviceChannel.invokeMethod<bool>('acquireWakeLock');
+      TrackingLogger.log('🔒 native PARTIAL_WAKE_LOCK acquire → $ok');
+      return ok ?? false;
+    } catch (e) {
+      TrackingLogger.log('🔒 native PARTIAL_WAKE_LOCK acquire failed: $e');
+      return false;
+    }
+  }
+
+  /// Release the native CPU wake lock. Safe to call even if never acquired.
+  static Future<void> _releaseNativeWakeLock() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _deviceChannel.invokeMethod<bool>('releaseWakeLock');
+      TrackingLogger.log('🔓 native PARTIAL_WAKE_LOCK released');
+    } catch (e) {
+      TrackingLogger.log('🔓 native PARTIAL_WAKE_LOCK release failed: $e');
+    }
+  }
+
+  /// Check whether the user has granted "Don't optimize" for our app.
+  /// Without this, aggressive OEM ROMs (Xiaomi, Oppo, Vivo, Realme, Samsung)
+  /// still kill the foreground service under Doze even with the native wake
+  /// lock — the OEM's own battery manager overrides Google's rules.
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final ok = await _deviceChannel
+          .invokeMethod<bool>('isIgnoringBatteryOptimizations');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Prompt the user (system dialog) to disable battery optimization. On
+  /// return, `isIgnoringBatteryOptimizations()` should be true if the user
+  /// tapped Allow. Caller is responsible for gating trip start on the result.
+  static Future<void> requestIgnoreBatteryOptimizations() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _deviceChannel.invokeMethod('requestIgnoreBatteryOptimizations');
+    } catch (_) {}
+  }
+
+  /// True when the phone runs an OEM ROM that kills background services even
+  /// with a valid wake lock + battery-optimization exemption (Xiaomi MIUI,
+  /// Vivo Funtouch, Oppo/Realme ColorOS, OnePlus, Huawei/Honor, Samsung,
+  /// Asus, Meizu, Lenovo). On these devices the driver MUST whitelist the app
+  /// in the OEM's autostart / protected-apps screen.
+  static Future<bool> isAggressiveOem() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _deviceChannel.invokeMethod<bool>('isAggressiveOem');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Deep-link the driver to the OEM's autostart / background-app whitelist
+  /// screen. On MIUI this opens "Autostart"; on ColorOS "Startup Manager"; on
+  /// Funtouch "Background App Manager"; etc. Falls back to app-info if the
+  /// exact activity was renamed by the OEM.
+  static Future<bool> openOemAutoStartSettings() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _deviceChannel
+          .invokeMethod<bool>('openOemAutoStartSettings');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ─── iOS-only guards ────────────────────────────────────────────────────
+  //
+  // iOS has no Doze — CLLocationManager with `location` background mode +
+  // Always permission keeps ticking on a locked phone. What silently kills
+  // background tracking on iOS is instead:
+  //
+  //   • "When in Use" instead of "Always" — background updates stop the
+  //     moment the app is backgrounded.
+  //   • Precise Location OFF (iOS 14+) — accuracy drops to ~1-3 km, useless
+  //     for vehicle tracking.
+  //   • Low Power Mode — background execution may be throttled.
+  //   • Background App Refresh OFF — SLC-based relaunch after termination
+  //     no longer works, so a swipe-killed app never re-appears.
+  //
+  // Each helper below wraps a MethodChannel check registered in AppDelegate.
+  // All return safe defaults on non-iOS so cross-platform callers don't need
+  // to branch on Platform.isIOS.
+
+  /// True iff the app has "Always" location permission on iOS (or any
+  /// location permission on Android; use the geolocator API for finer checks).
+  static Future<bool> isAlwaysAuthorized() async {
+    if (!Platform.isIOS) return true;
+    try {
+      final ok = await _deviceChannel.invokeMethod<bool>('isAlwaysAuthorized');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// iOS 14+: true iff the user granted **Precise Location**. On iOS < 14
+  /// always true (the API didn't exist). Approximate location returns points
+  /// within a ~1-3 km radius, which is useless for vehicle tracking.
+  static Future<bool> isPreciseLocationGranted() async {
+    if (!Platform.isIOS) return true;
+    try {
+      final ok = await _deviceChannel.invokeMethod<bool>('isPreciseLocation');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True iff Background App Refresh is enabled for the app on iOS.
+  /// When disabled, iOS won't relaunch a swipe-killed app for SLC events.
+  static Future<bool> isBackgroundRefreshAvailable() async {
+    if (!Platform.isIOS) return true;
+    try {
+      final ok = await _deviceChannel
+          .invokeMethod<bool>('isBackgroundRefreshAvailable');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True iff Low Power Mode is currently enabled. Doesn't necessarily stop
+  /// tracking but throttles background work — the driver should be warned.
+  static Future<bool> isIosLowPowerModeEnabled() async {
+    if (!Platform.isIOS) return false;
+    try {
+      final ok = await _deviceChannel
+          .invokeMethod<bool>('isLowPowerModeEnabled');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Open the iOS Settings app on Drive Bestseed's screen so the driver can
+  /// change Location, Background App Refresh, or Precise Location in one tap.
+  static Future<bool> openIosLocationSettings() async {
+    if (!Platform.isIOS) return false;
+    try {
+      final ok = await _deviceChannel
+          .invokeMethod<bool>('openLocationSettings');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Initialize the background service. Call once at app startup (in main()).
   static Future<void> initialize() async {
     final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -138,6 +314,11 @@ class BackgroundLocationService {
       return;
     }
 
+    // Acquire the OS-level CPU wake lock BEFORE starting the foreground
+    // service. If Doze already had us throttled from a previous session, this
+    // is the primitive that gets us out.
+    await _acquireNativeWakeLock();
+
     await _prepareAndroidBackgroundExecution();
 
     final isRunning = await _service.isRunning();
@@ -170,6 +351,11 @@ class BackgroundLocationService {
     await cancelGuardianTask();
     await cancelActiveCaptureTask();
     await TrackingDatabase.clearAll();
+
+    // Release the native CPU wake lock last so any in-flight tick during
+    // shutdown still runs at full CPU. Skipping this on process death is
+    // fine — Android auto-releases wake locks when the process dies.
+    await _releaseNativeWakeLock();
   }
 
   /// Check if the service is currently running.
@@ -258,6 +444,10 @@ class BackgroundLocationService {
     }
 
     print('📍 [RESTART] Starting Android foreground service...');
+    // Re-acquire the native wake lock — the previous journey session might
+    // have released it, and the zombie-restart path here handles cold-starts
+    // after the OS killed the process.
+    await _acquireNativeWakeLock();
     await _prepareAndroidBackgroundExecution();
     await _service.startService();
     await Future.delayed(const Duration(seconds: 2));

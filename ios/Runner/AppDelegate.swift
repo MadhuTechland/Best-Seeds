@@ -53,6 +53,79 @@ import CoreLocation
         }
       }
 
+      // Device-info channel — same name as the Android side so the Dart layer
+      // uses a single channel cross-platform. Mirrors the iOS-relevant subset
+      // of the Android checks (Always/Precise/BackgroundRefresh/LowPowerMode)
+      // plus openLocationSettings so we can deep-link the driver to the app's
+      // Settings screen when a required toggle is off.
+      //
+      // WHY on iOS specifically: iOS doesn't have Doze — CLLocationManager
+      // with `location` background mode + Always permission keeps ticking on
+      // a locked phone. What DOES silently kill background tracking is the
+      // user granting "When in Use" (not "Always"), disabling Precise
+      // Location, or the periodic reminder ("continue background access?")
+      // being answered with "Only while using". These checks let the driver
+      // app catch that and prompt the driver to restore the setting.
+      let deviceInfoChannel = FlutterMethodChannel(
+        name: "bestseeds/device_info",
+        binaryMessenger: controller.binaryMessenger
+      )
+      deviceInfoChannel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "isAlwaysAuthorized":
+          let status: CLAuthorizationStatus
+          if #available(iOS 14.0, *) {
+            status = CLLocationManager().authorizationStatus
+          } else {
+            status = CLLocationManager.authorizationStatus()
+          }
+          result(status == .authorizedAlways)
+
+        case "isPreciseLocation":
+          if #available(iOS 14.0, *) {
+            result(CLLocationManager().accuracyAuthorization == .fullAccuracy)
+          } else {
+            // Pre-iOS 14 always had full accuracy.
+            result(true)
+          }
+
+        case "isBackgroundRefreshAvailable":
+          // .available = user has Background App Refresh ON for the app.
+          // .denied / .restricted = OFF. In practice location tracking still
+          // works while foregrounded and via SLC (which is BAR-exempt for
+          // location-authorized apps), but foreground-fetch tasks and some
+          // relaunch scenarios are affected — worth surfacing.
+          result(UIApplication.shared.backgroundRefreshStatus == .available)
+
+        case "isLowPowerModeEnabled":
+          result(ProcessInfo.processInfo.isLowPowerModeEnabled)
+
+        case "openLocationSettings":
+          if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            result(true)
+          } else {
+            result(false)
+          }
+
+        // Android-only methods — return safe defaults so a cross-platform
+        // Dart call site doesn't have to branch on Platform.isAndroid for
+        // every invocation. These are wake-lock / OEM-autostart checks that
+        // have no iOS equivalent.
+        case "acquireWakeLock", "releaseWakeLock":
+          result(true)
+        case "isWakeLockHeld":
+          result(false)
+        case "isAggressiveOem", "isIgnoringBatteryOptimizations":
+          result(true)
+        case "requestIgnoreBatteryOptimizations", "openOemAutoStartSettings":
+          result(true)
+
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+
       // Live Activity channel — drives the lock-screen / Dynamic Island tile.
       // Flutter calls start at journey start, update on every successful
       // location send, and end at journey completion / logout / 401.

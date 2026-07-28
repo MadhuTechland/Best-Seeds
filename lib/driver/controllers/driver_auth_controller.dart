@@ -22,6 +22,12 @@ class DriverAuthController extends GetxController {
   // Incremented whenever the OTP screen should clear its input boxes
   // (after a failed verify, or after a successful resend).
   RxInt otpClearSignal = 0.obs;
+  // The 6-digit code SMS Retriever extracted from the OTP SMS. The listener
+  // is primed on the login screen BEFORE the send-OTP request goes out
+  // (Google's Retriever API is register-then-receive — starting it inside
+  // the OTP screen's initState can lose a fast-delivered SMS), then the
+  // OTP screen watches this Rx and auto-fills + auto-verifies.
+  RxString autofilledOtp = ''.obs;
 
   Future<void> sendOtp(String phoneNumber) async {
     try {

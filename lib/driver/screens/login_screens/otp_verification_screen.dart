@@ -2,6 +2,7 @@ import 'package:bestseeds/driver/controllers/driver_auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:smart_auth/smart_auth.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   const OtpVerificationScreen({super.key});
@@ -21,6 +22,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   // Track if OTP is complete (6 digits)
   bool _isOtpComplete = false;
   Worker? _clearWorker;
+  Worker? _autofillWorker;
+
+  // SMS Retriever: the actual listener is primed on the login screen BEFORE
+  // the OTP request is sent (see _primeSmsRetriever). When the SMS arrives
+  // Google hands the code to the controller via `autofilledOtp`, which this
+  // screen watches below.
+  final SmartAuth _smartAuth = SmartAuth.instance;
 
   String get otpCode => otpControllers.map((c) => c.text).join();
 
@@ -34,12 +42,29 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       ctrl.addListener(_checkOtpComplete);
     }
     // Clear boxes when the controller signals (wrong OTP / resent OTP).
-    _clearWorker = ever<int>(controller.otpClearSignal, (_) => _clearOtpFields());
+    // Also re-arm the SMS Retriever subscription — the previous one has
+    // already fired (or expired) by now, so we need a fresh one for the
+    // newly-issued OTP.
+    _clearWorker = ever<int>(controller.otpClearSignal, (_) {
+      _clearOtpFields();
+      _rearmSmsListener();
+    });
+    // React to whatever the login-screen listener already grabbed, or to any
+    // future re-armed listener that succeeds.
+    _autofillWorker = ever<String>(controller.autofilledOtp, (code) {
+      if (code.length == 6) _autofillOtp(code);
+    });
+    // If the code already arrived while we were navigating, pick it up now.
+    if (controller.autofilledOtp.value.length == 6) {
+      _autofillOtp(controller.autofilledOtp.value);
+    }
   }
 
   @override
   void dispose() {
     _clearWorker?.dispose();
+    _autofillWorker?.dispose();
+    _smartAuth.removeSmsRetrieverApiListener();
     for (var ctrl in otpControllers) {
       ctrl.removeListener(_checkOtpComplete);
       ctrl.dispose();
@@ -48,6 +73,38 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       node.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _rearmSmsListener() async {
+    try {
+      controller.autofilledOtp.value = '';
+      final res = await _smartAuth.getSmsWithRetrieverApi(
+        matcher: r'\d{6}',
+      );
+      if (!mounted) return;
+      if (!res.hasData) return;
+      final code = res.data?.code;
+      if (code != null && code.length == 6) {
+        controller.autofilledOtp.value = code;
+      }
+    } catch (_) {
+      // Retriever timed out or another listener race — silently ignore
+      // so the manual entry path still works.
+    }
+  }
+
+  void _autofillOtp(String code) {
+    for (var i = 0; i < 6; i++) {
+      otpControllers[i].text = code[i];
+    }
+    // Kick focus to the last box so the user can see the field is filled.
+    if (focusNodes.isNotEmpty) {
+      focusNodes.last.requestFocus();
+    }
+    // Fire the verify call automatically — no user tap needed.
+    if (!controller.isLoading.value) {
+      controller.verifyOtp(code);
+    }
   }
 
   void _checkOtpComplete() {

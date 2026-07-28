@@ -179,12 +179,6 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     return DateFormat('yyyy-MM-dd').format(date);
   }
 
-  /// Full datetime format for backend fields that must carry a real time
-  /// (delivery_datetime) — so the driver app doesn't display midnight.
-  String _formatDateTimeForApi(DateTime date) {
-    return DateFormat('yyyy-MM-dd HH:mm:ss').format(date);
-  }
-
   @override
   void dispose() {
     _piecesController.dispose();
@@ -257,26 +251,8 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
       },
     );
     if (picked != null) {
-      // Also prompt for a time so the driver sees the real expected delivery
-      // moment instead of "12:00 AM". Cancelling the time picker keeps the
-      // existing time (or midnight for a fresh date).
-      final existing = _expectedDeliveryDate;
-      final initialTime = existing != null
-          ? TimeOfDay(hour: existing.hour, minute: existing.minute)
-          : TimeOfDay.now();
-      if (!mounted) return;
-      final pickedTime = await showTimePicker(
-        context: context,
-        initialTime: initialTime,
-      );
       setState(() {
-        _expectedDeliveryDate = DateTime(
-          picked.year,
-          picked.month,
-          picked.day,
-          pickedTime?.hour ?? existing?.hour ?? 0,
-          pickedTime?.minute ?? existing?.minute ?? 0,
-        );
+        _expectedDeliveryDate = picked;
       });
     }
   }
@@ -357,7 +333,7 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
             _preferredDate != null ? _formatDateForApi(_preferredDate!) : '',
         travelCost: travelCostText,
         expectedDeliveryDate: _expectedDeliveryDate != null
-            ? _formatDateTimeForApi(_expectedDeliveryDate!)
+            ? _formatDateForApi(_expectedDeliveryDate!)
             : '',
         bookingDescription: _bookingDescriptionController.text.isNotEmpty
             ? _bookingDescriptionController.text
@@ -500,14 +476,13 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                     ],
                     */
 
-                    /// Expected Delivery Date + Time
+                    /// Expected Delivery Date with calendar
                     _buildDateField(
                       width,
                       height,
-                      'Expected Delivery Date & Time',
+                      'Expected Delivery Date',
                       _expectedDeliveryDate,
                       _selectExpectedDeliveryDate,
-                      showTime: true,
                     ),
                     SizedBox(height: height * 0.025),
 
@@ -977,18 +952,8 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
     double height,
     String label,
     DateTime? selectedDate,
-    VoidCallback onTap, {
-    bool showTime = false,
-  }) {
-    String labelFor(DateTime dt) {
-      // Show time only when we actually captured one (non-midnight),
-      // otherwise fall back to date-only to avoid a misleading "12:00 AM".
-      if (showTime && (dt.hour != 0 || dt.minute != 0)) {
-        return DateFormat('dd MMM yyyy, hh:mm a').format(dt);
-      }
-      return _formatDate(dt);
-    }
-
+    VoidCallback onTap,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1017,8 +982,8 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
                 Expanded(
                   child: Text(
                     selectedDate != null
-                        ? labelFor(selectedDate)
-                        : (showTime ? 'Select date & time' : 'Select date'),
+                        ? _formatDate(selectedDate)
+                        : 'Select date',
                     style: TextStyle(
                       fontSize: width * 0.04,
                       color: selectedDate != null
@@ -1207,10 +1172,12 @@ class _EditHatcheryDetailsScreenState extends State<EditHatcheryDetailsScreen> {
         ? existingPriority
         : null;
 
-    // Pre-fill location from existing driver data
-    double? vehicleStartLat = isEditing ? existingDriver.vehicleStartLat : null;
-    double? vehicleStartLng = isEditing ? existingDriver.vehicleStartLng : null;
-    String? vehicleStartAddress = isEditing ? existingDriver.vehicleStartAddress : null;
+    // Pre-fill location from the booking. Admin can set vehicle_start_lat/lng/
+    // address before any driver is assigned, so we take these values regardless
+    // of isEditing — the API returns them straight from the booking row.
+    double? vehicleStartLat = existingDriver.vehicleStartLat;
+    double? vehicleStartLng = existingDriver.vehicleStartLng;
+    String? vehicleStartAddress = existingDriver.vehicleStartAddress;
 
     // Fetch drivers list
     Future<void> fetchDrivers(StateSetter setModalState) async {

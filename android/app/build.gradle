@@ -33,6 +33,17 @@ android {
             keyPassword = keystoreProperties['keyPassword']
             storeFile = keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
             storePassword = keystoreProperties['storePassword']
+            // Sign with all four schemes so the APK installs on every Android
+            // version the app supports: v1 (JAR) is required for Android <7,
+            // v2/v3 for modern devices, v4 for incremental install. Without
+            // v1, older phones show "There was a problem parsing the package"
+            // — the SMS Retriever hash also depends on the signing cert, but
+            // enabling extra schemes doesn't change the cert, only how it's
+            // wrapped in the APK.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
 

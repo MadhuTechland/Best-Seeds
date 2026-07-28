@@ -54,6 +54,21 @@ class MainActivity: FlutterActivity() {
                             )
                         }
                     }
+                    "acquireWakeLock" -> {
+                        result.success(WakeLockManager.acquire(applicationContext))
+                    }
+                    "releaseWakeLock" -> {
+                        result.success(WakeLockManager.release())
+                    }
+                    "isWakeLockHeld" -> {
+                        result.success(WakeLockManager.isHeld())
+                    }
+                    "isAggressiveOem" -> {
+                        result.success(OemAutoStartHelper.isAggressive())
+                    }
+                    "openOemAutoStartSettings" -> {
+                        result.success(OemAutoStartHelper.openAutoStartSettings(this))
+                    }
                     else -> result.notImplemented()
                 }
             }
