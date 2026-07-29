@@ -2319,14 +2319,21 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
       return hold;
     }
 
-    // ── GATE 1: Snap quality (hard threshold, no raw fallback) ──
+    // ── GATE 1: Snap quality (hard threshold) ──
+    // When the nearest polyline vertex is beyond the mode's threshold, the
+    // polyline this snap targets doesn't reflect the road the driver is on
+    // (stale planned route, detour, Directions API missing a minor road,
+    // or the route was calculated for now-different waypoints). Falling
+    // back to _lastAcceptedSnap leaves the marker frozen on the wrong
+    // polyline while the driver moves elsewhere — exactly the bug where
+    // the vehicle icon shows 20+ km off the drawn route. Return raw GPS
+    // so the marker always tracks reality; polyline is guidance, marker
+    // is truth.
     if (minDist > threshold) {
-      debugPrint('🚫 Snap quality fail: ${minDist.toStringAsFixed(0)}m > ${threshold.toStringAsFixed(0)}m (mode=$_currentMode)');
-      final hold = _lastAcceptedSnap
-          ?? (_driverBreadcrumbs.isNotEmpty ? _driverBreadcrumbs.last : raw);
+      debugPrint('🚫 Snap quality fail: ${minDist.toStringAsFixed(0)}m > ${threshold.toStringAsFixed(0)}m (mode=$_currentMode) — returning raw GPS');
       _snapCacheInput = raw;
-      _snapCacheOutput = hold;
-      return hold;
+      _snapCacheOutput = raw;
+      return raw;
     }
 
     // ── GATE 2: Bearing/direction agreement ──
