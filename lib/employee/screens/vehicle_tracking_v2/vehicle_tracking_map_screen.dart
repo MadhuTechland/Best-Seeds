@@ -901,9 +901,21 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
                 // the reroute every poll — regenerating upcoming stops again and
                 // again and flickering the timeline. Only reroute once the
                 // driver has actually moved (>50 m) from the last reroute point.
+                //
+                // EXCEPTION for huge deviations (>500m): the guard would keep
+                // a completely-wrong polyline visible indefinitely when the
+                // driver is parked off any known road. Bypass the guard once
+                // the deviation is so large that the current polyline can't
+                // possibly represent where the driver is — reroute again to
+                // fetch a fresh path from the current position so blue/green
+                // don't stay stuck on the stale route.
                 final alreadyReroutedHere = _lastRerouteLatLng != null &&
                     _haversineMeters(_currentLatLng!, _lastRerouteLatLng!) < 50;
-                if (shouldReroute && !alreadyReroutedHere) {
+                final huge = deviation > 500;
+                if (shouldReroute && (!alreadyReroutedHere || huge)) {
+                  if (huge && alreadyReroutedHere) {
+                    debugPrint('🔄 Reroute FORCED (huge deviation ${deviation.toStringAsFixed(0)}m — bypassing already-rerouted-here guard)');
+                  }
                   _consecutiveDeviations = 0;
                   _lastRerouteLatLng = _currentLatLng;
                   await _rerouteFromDriverPosition();
