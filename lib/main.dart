@@ -21,6 +21,7 @@ void main() async {
   // Initialize push notification service (FCM + local notifications)
   final notificationService = NotificationService();
   await notificationService.initialize();
+  
 
   // Initialize background location service (creates notification channel,
   // registers the isolate entry point). Does NOT start tracking.
