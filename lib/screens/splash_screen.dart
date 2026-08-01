@@ -8,6 +8,7 @@ import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/services/notification_service.dart';
 import 'package:bestseeds/services/version_check_service.dart';
 import 'package:bestseeds/widgets/login_location_screen.dart';
+import 'package:bestseeds/widgets/update_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
@@ -27,17 +28,44 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkLoginStatus() async {
+    // ── Force-update gate (Play In-App Updates + Firebase Remote Config) ──
+    // Runs FIRST — before any auth/token navigation. On update available
+    // we replace the whole stack with DriverForceUpdateScreen, mirroring
+    // the pattern used by the user app. Doing it here (rather than via a
+    // MaterialApp.builder wrapper) avoids the dialog-vs-Navigator race
+    // where splash's own Get.offAllNamed would pop the dialog.
+    try {
+      final v = await DriverVersionCheck.checkForceUpdate();
+      if (v.decision == DriverForceUpdateDecision.showBlockScreen) {
+        if (!mounted) return;
+        Get.offAll(() => DriverForceUpdateScreen(
+              useInAppUpdate: v.useInAppUpdate,
+              storeUrlAndroid: v.storeUrlAndroid,
+              storeUrlIos: v.storeUrlIos,
+              allowLater: v.inJourney,
+              journeyFingerprint: v.journeyFingerprint,
+              // "Later" resumes the auth flow — re-invoke this same
+              // routine after the driver's choice is persisted, so the
+              // rest of splash (auth check, home navigation) proceeds.
+              onLater: () async {
+                if (mounted) _checkLoginStatus();
+              },
+            ));
+        return;
+      }
+    } catch (e) {
+      debugPrint('Splash: DriverVersionCheck failed (non-fatal): $e');
+    }
+
     await Future.delayed(const Duration(seconds: 2));
 
     final employeeStorage = StorageService();
     final driverStorage = DriverStorageService();
 
-    // ── Force-update gate ──
-    // Ask the backend if the installed build is still supported for the
-    // active session's app. If a force-update is required, the service
-    // shows a blocking dialog and we short-circuit here so no further
-    // navigation happens behind it. If neither session exists we skip
-    // the check — the login screen has nothing that can go wrong.
+    // ── Legacy backend version-check gate ──
+    // Kept as a secondary check for the old `/api/app-version-check`
+    // endpoint (independent of Play In-App Updates). Fires only when a
+    // session exists so it doesn't add latency to first-time users.
     final hasEmployeeSession = await employeeStorage.getUser() != null;
     final hasDriverSession = await driverStorage.getDriver() != null;
     if (hasDriverSession) {

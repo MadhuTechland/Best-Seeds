@@ -1,3 +1,5 @@
+import 'package:bestseeds/announcement/announcement_controller.dart';
+import 'package:bestseeds/announcement/announcements_screen.dart';
 import 'package:bestseeds/employee/controllers/profile_controller.dart';
 import 'package:bestseeds/employee/screens/employee_main_nav_screen.dart';
 import 'package:bestseeds/employee/screens/help_screen.dart';
@@ -14,6 +16,8 @@ class EmployeeProfileScreen extends StatelessWidget {
   EmployeeProfileScreen({super.key});
 
   final EmployeeProfileController controller = Get.put(EmployeeProfileController());
+  // Shared permanent instance — the badge stays in step with the popup service.
+  final AnnouncementController announcementController = AnnouncementController.to;
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +48,12 @@ class EmployeeProfileScreen extends StatelessWidget {
                         );
                       },
                     ),
+                    Obx(() => ProfileMenuItem(
+                          icon: Icons.campaign_outlined,
+                          title: 'Announcements',
+                          badgeCount: announcementController.unreadCount.value,
+                          onTap: () => Get.to(() => const AnnouncementsScreen()),
+                        )),
                     ProfileMenuItem(
                       icon: Icons.description_outlined,
                       title: 'Bookings',

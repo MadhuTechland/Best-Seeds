@@ -1,3 +1,4 @@
+import 'package:bestseeds/announcement/announcement_prompt_service.dart';
 import 'package:bestseeds/driver/models/user_model.dart';
 import 'package:bestseeds/employee/controllers/notification_controller.dart';
 import 'package:bestseeds/employee/models/booking_model.dart';
@@ -20,7 +21,8 @@ class EmployeeDashboard extends StatefulWidget {
   State<EmployeeDashboard> createState() => _EmployeeDashboardState();
 }
 
-class _EmployeeDashboardState extends State<EmployeeDashboard> {
+class _EmployeeDashboardState extends State<EmployeeDashboard>
+    with WidgetsBindingObserver {
   /// Home category tabs in display order. Each maps to a backend filter: either
   /// a grouped `tab` string OR an exact `status` value
   /// (1=New, 2=Confirmed, 3=Driver Assigned, 4=In Journey, 5=Delivered,
@@ -86,13 +88,29 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadData();
     _searchController.addListener(_onSearchChanged);
     _listScrollController.addListener(_onScroll);
+
+    // Any announcement the admin sent while this vendor was away pops up here.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AnnouncementPromptService.instance.check();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // An announcement may have been sent while backgrounded.
+      AnnouncementPromptService.instance.check();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     _tabScrollController.dispose();
     _listScrollController.dispose();

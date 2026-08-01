@@ -1,263 +1,553 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:bestseeds/driver/services/active_journey_prefs.dart';
+import 'package:bestseeds/services/itunes_lookup.dart';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:upgrader/upgrader.dart';
+import 'package:in_app_update/in_app_update.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-// Play Store / App Store identifiers. Bundle id is the same on both stores.
+// Dev-only overrides used for on-device UI verification. Both must be
+// false for production builds — leaving them true would force every
+// launch onto the update screen regardless of Play state.
+const bool _kForceDialogForTest = false;
+const bool _kForceInJourneyForTest = false;
+
 const String _androidPackageName = 'com.driver.bestseed';
-// iOS App Store numeric id — leave empty until the app is published; the
-// fallback URL will still work as a web link.
 const String _iosAppStoreId = '';
 
-/// Wraps the app tree and shows a custom, beautiful "Update Available"
-/// dialog whenever the [Upgrader] instance decides an update is required
-/// OR when the version check itself fails (e.g. the Play Store scrape
-/// couldn't resolve the app listing). The single **Update Now** button
-/// deep-links to the store; there is no dismiss, no Later, no Close —
-/// the driver cannot use the app until they update.
-///
-/// WHY not just [UpgradeAlert]: the stock dialog shows a scary
-/// "Something went wrong / Check that Google Play is enabled" fallback
-/// whenever the Play Store scrape fails, which drivers repeatedly saw
-/// on cold-start and understandably confused for a device problem.
-/// This gate treats the same signal as "update required" and shows a
-/// friendly UI with a single call-to-action instead.
-class UpdateGate extends StatefulWidget {
-  final Upgrader upgrader;
-  final Widget child;
+const String _androidStoreDeepLink = 'market://details?id=$_androidPackageName';
+const String _androidStoreWebUrl =
+    'https://play.google.com/store/apps/details?id=$_androidPackageName';
+const String _iosStoreSearchUrl =
+    'https://apps.apple.com/search?term=drive%20bestseed';
 
-  const UpdateGate({
-    super.key,
-    required this.upgrader,
-    required this.child,
-  });
+const String _rcMinVersion = 'min_driver_app_version';
+const String _rcStoreAndroid = 'store_url_driver_android';
+const String _rcStoreIos = 'store_url_driver_ios';
 
-  @override
-  State<UpdateGate> createState() => _UpdateGateState();
+/// SharedPreferences key holding the fingerprint of the journey during
+/// which the driver last tapped "Later". While the current journey's
+/// fingerprint matches, the update screen is suppressed. Cleared
+/// automatically when the journey ends or a different one starts.
+const String _kSkippedJourneyFp = 'update_gate_skipped_journey_fp';
+
+/// What driver splash should do after `DriverVersionCheck.checkForceUpdate`.
+enum DriverForceUpdateDecision {
+  /// No update required — carry on with the normal auth / home navigation.
+  proceed,
+
+  /// Replace the nav stack with `DriverForceUpdateScreen`. Its "Update Now"
+  /// button either invokes Google's immediate-update installer (when
+  /// `useInAppUpdate` is true) or deep-links to the Play Store.
+  showBlockScreen,
 }
 
-class _UpdateGateState extends State<UpdateGate> with WidgetsBindingObserver {
-  bool _dialogShown = false;
+class DriverVersionCheckResult {
+  final DriverForceUpdateDecision decision;
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _check());
-  }
+  /// True when Play Core confirmed a newer version + the device can do
+  /// an immediate install. Tells DriverForceUpdateScreen to call
+  /// `performImmediateUpdate` inline instead of a store deep-link.
+  final bool useInAppUpdate;
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Re-check when the app returns from background — covers the "driver
-    // opened Play Store, tapped Update, came back before it installed"
-    // scenario. If they're still on the old version the gate re-fires.
-    if (state == AppLifecycleState.resumed) {
-      _dialogShown = false;
-      _check();
+  /// True when the driver is mid-journey. DriverForceUpdateScreen then
+  /// shows a "Later" button that persists the driver's choice until the
+  /// journey ends.
+  final bool inJourney;
+
+  /// Fingerprint of the current live journey (pickup + drop coords).
+  /// Used to persist the "Later" choice per-journey.
+  final String journeyFingerprint;
+
+  final String storeUrlAndroid;
+  final String storeUrlIos;
+
+  const DriverVersionCheckResult({
+    required this.decision,
+    required this.useInAppUpdate,
+    required this.inJourney,
+    required this.journeyFingerprint,
+    required this.storeUrlAndroid,
+    required this.storeUrlIos,
+  });
+}
+
+/// Version-check helper for the driver app. Mirrors the user app's
+/// `AppVersionManager` pattern: driver splash calls
+/// `DriverVersionCheck.checkForceUpdate()` before its own auth checks and,
+/// on `showBlockScreen`, does `Get.offAll(() => DriverForceUpdateScreen(...))`
+/// which replaces the whole stack — no dialog-above-Navigator race with
+/// splash's own `Get.offAllNamed`.
+class DriverVersionCheck {
+  DriverVersionCheck._();
+
+  static Future<DriverVersionCheckResult> checkForceUpdate() async {
+    final journey = await _readJourneyState();
+    String storeAndroid = _androidStoreWebUrl;
+    String storeIos = _iosStoreSearchUrl;
+
+    // TEMP dev override — see _kForceDialogForTest above.
+    if (_kForceDialogForTest) {
+      debugPrint('DriverVersionCheck: _kForceDialogForTest=true — forcing screen');
+      return DriverVersionCheckResult(
+        decision: journey.suppress
+            ? DriverForceUpdateDecision.proceed
+            : DriverForceUpdateDecision.showBlockScreen,
+        useInAppUpdate: false,
+        inJourney: journey.inJourney,
+        journeyFingerprint: journey.fp,
+        storeUrlAndroid: storeAndroid,
+        storeUrlIos: storeIos,
+      );
+    }
+
+    // ── 1) Android: Google Play In-App Updates ──
+    // MUST guard with Platform.isAndroid — the plugin throws
+    // MissingPluginException on iOS.
+    if (Platform.isAndroid) {
+      try {
+        final upd = await InAppUpdate.checkForUpdate()
+            .timeout(const Duration(seconds: 6));
+        if (upd.updateAvailability == UpdateAvailability.updateAvailable) {
+          return DriverVersionCheckResult(
+            decision: journey.suppress
+                ? DriverForceUpdateDecision.proceed
+                : DriverForceUpdateDecision.showBlockScreen,
+            useInAppUpdate: upd.immediateUpdateAllowed,
+            inJourney: journey.inJourney,
+            journeyFingerprint: journey.fp,
+            storeUrlAndroid: storeAndroid,
+            storeUrlIos: storeIos,
+          );
+        }
+        // Play answered authoritatively: no update available. Trust Play,
+        // skip RC (a misconfigured RC floor should not override Play).
+        return DriverVersionCheckResult(
+          decision: DriverForceUpdateDecision.proceed,
+          useInAppUpdate: false,
+          inJourney: journey.inJourney,
+          journeyFingerprint: journey.fp,
+          storeUrlAndroid: storeAndroid,
+          storeUrlIos: storeIos,
+        );
+      } catch (e) {
+        debugPrint('DriverVersionCheck: InAppUpdate check failed: $e');
+      }
+    }
+
+    // Fetch installed version up front — both the iOS iTunes branch and
+    // the Remote Config branch below need it.
+    String currentVersion = '0.0.0';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      currentVersion = info.version;
+    } catch (e) {
+      debugPrint('DriverVersionCheck: PackageInfo failed: $e');
+    }
+
+    // ── 2) iOS: Apple iTunes Lookup API ──
+    // Apple has no equivalent to Google's Play In-App Updates. Query the
+    // public iTunes Lookup endpoint by bundle ID and compare its
+    // `version` field to the installed build. If iTunes answers
+    // authoritatively, trust it and skip Remote Config (same pattern
+    // used for Play above); only fall through to RC if iTunes is
+    // unreachable.
+    //
+    // SAFETY: skip the comparison entirely when currentVersion is still
+    // the '0.0.0' placeholder from a PackageInfo failure — otherwise
+    // _isBelow('0.0.0', anyRealAppStoreVersion) is unconditionally true
+    // and we'd block every iOS driver with no Later button (when not
+    // mid-journey). Better to fall through to RC (whose guard already
+    // blocks the '0.0.0' floor) and ultimately proceed.
+    if (Platform.isIOS && currentVersion != '0.0.0') {
+      final lookup = await ITunesLookup.lookup(
+        bundleId: 'com.driver.bestseed',
+      );
+      if (lookup != null) {
+        if (lookup.trackViewUrl.isNotEmpty) storeIos = lookup.trackViewUrl;
+        if (_isBelow(currentVersion, lookup.version)) {
+          return DriverVersionCheckResult(
+            decision: journey.suppress
+                ? DriverForceUpdateDecision.proceed
+                : DriverForceUpdateDecision.showBlockScreen,
+            useInAppUpdate: false, // iOS has no in-app installer
+            inJourney: journey.inJourney,
+            journeyFingerprint: journey.fp,
+            storeUrlAndroid: storeAndroid,
+            storeUrlIos: storeIos,
+          );
+        }
+        // iTunes said no update — trust it, skip RC.
+        return DriverVersionCheckResult(
+          decision: DriverForceUpdateDecision.proceed,
+          useInAppUpdate: false,
+          inJourney: journey.inJourney,
+          journeyFingerprint: journey.fp,
+          storeUrlAndroid: storeAndroid,
+          storeUrlIos: storeIos,
+        );
+      }
+      debugPrint('DriverVersionCheck: iTunes Lookup returned null — falling back to RC');
+    }
+
+    // ── 3) Both platforms: Remote Config floor (emergency backup) ──
+    try {
+
+      final rc = FirebaseRemoteConfig.instance;
+      await rc.setConfigSettings(RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 6),
+        minimumFetchInterval: Duration.zero,
+      ));
+      await rc.setDefaults(const {
+        _rcMinVersion: '0.0.0',
+        _rcStoreAndroid: '',
+        _rcStoreIos: '',
+      });
+      await rc.fetchAndActivate();
+
+      final a = rc.getString(_rcStoreAndroid).trim();
+      final i = rc.getString(_rcStoreIos).trim();
+      if (a.isNotEmpty) storeAndroid = a;
+      if (i.isNotEmpty) storeIos = i;
+
+      final minRequired = rc.getString(_rcMinVersion).trim();
+      final needsUpdate = minRequired.isNotEmpty &&
+          minRequired != '0.0.0' &&
+          _isBelow(currentVersion, minRequired);
+
+      return DriverVersionCheckResult(
+        decision: (needsUpdate && !journey.suppress)
+            ? DriverForceUpdateDecision.showBlockScreen
+            : DriverForceUpdateDecision.proceed,
+        useInAppUpdate: false,
+        inJourney: journey.inJourney,
+        journeyFingerprint: journey.fp,
+        storeUrlAndroid: storeAndroid,
+        storeUrlIos: storeIos,
+      );
+    } catch (e) {
+      debugPrint('DriverVersionCheck: RC check soft-fail: $e');
+      return DriverVersionCheckResult(
+        decision: DriverForceUpdateDecision.proceed,
+        useInAppUpdate: false,
+        inJourney: journey.inJourney,
+        journeyFingerprint: journey.fp,
+        storeUrlAndroid: storeAndroid,
+        storeUrlIos: storeIos,
+      );
     }
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  Future<void> _check() async {
-    // Ensure Upgrader has run its version check at least once. Safe to
-    // call multiple times — it caches internally.
-    try {
-      await widget.upgrader.initialize();
-    } catch (_) {
-      // Swallow — a hard error here is treated as "we don't know", same as
-      // the shouldDisplayUpgrade branch below.
+  static Future<_JourneyState> _readJourneyState() async {
+    // TEMP dev override — see _kForceInJourneyForTest above.
+    if (_kForceInJourneyForTest) {
+      return const _JourneyState(
+        inJourney: true,
+        fp: 'test_journey_fp',
+        suppress: false,
+      );
     }
+    try {
+      final j = await ActiveJourneyPrefs.read();
+      final fp = j.hasPickup
+          ? '${j.pickupLat}_${j.pickupLng}_${j.dropLat ?? ''}_${j.dropLng ?? ''}'
+          : '';
 
-    if (!mounted || _dialogShown) return;
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_kSkippedJourneyFp) ?? '';
 
-    final needsUpdate = _needsUpdate();
-    if (!needsUpdate) return;
-
-    _dialogShown = true;
-    await _showUpdateDialog();
+      if (fp.isEmpty) {
+        if (saved.isNotEmpty) await prefs.remove(_kSkippedJourneyFp);
+        return const _JourneyState(inJourney: false, fp: '', suppress: false);
+      }
+      if (saved == fp) {
+        return _JourneyState(inJourney: true, fp: fp, suppress: true);
+      }
+      if (saved.isNotEmpty) await prefs.remove(_kSkippedJourneyFp);
+      return _JourneyState(inJourney: true, fp: fp, suppress: false);
+    } catch (e) {
+      debugPrint('DriverVersionCheck: journey state read failed: $e');
+      return const _JourneyState(inJourney: false, fp: '', suppress: false);
+    }
   }
 
-  /// True when Upgrader is sure an update is required, OR when it couldn't
-  /// determine the current store version at all. The second branch replaces
-  /// the stock "Something went wrong / check Google Play" dialog — instead
-  /// of blaming the driver's device, we assume the app is out of date and
-  /// nudge them to the store.
-  bool _needsUpdate() {
-    try {
-      if (widget.upgrader.shouldDisplayUpgrade()) return true;
-    } catch (_) {}
-    // Fallback for scrape failures — when Upgrader can't fetch the store
-    // listing (network hiccup, region 404, scraper HTML changed) it silently
-    // sets `versionInfo` to null and `shouldDisplayUpgrade()` returns false.
-    // We treat that null as "we don't know → assume out of date" so the
-    // driver sees the nice Update dialog instead of the stock "Something
-    // went wrong / check Google Play" scare message.
-    try {
-      final vi = widget.upgrader.state.versionInfo;
-      if (vi == null) return true;
-    } catch (_) {
-      return true;
+  static bool _isBelow(String current, String minimum) {
+    final c = _segments(current);
+    final m = _segments(minimum);
+    final len = c.length > m.length ? c.length : m.length;
+    for (var i = 0; i < len; i++) {
+      final cv = i < c.length ? c[i] : 0;
+      final mv = i < m.length ? m[i] : 0;
+      if (cv < mv) return true;
+      if (cv > mv) return false;
     }
     return false;
   }
 
-  Future<void> _showUpdateDialog() async {
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.55),
-      builder: (_) => const _UpdateDialog(),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
+  static List<int> _segments(String v) => v
+      .split('+')
+      .first
+      .split('.')
+      .map((s) => int.tryParse(s.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0)
+      .toList();
 }
 
-class _UpdateDialog extends StatelessWidget {
-  const _UpdateDialog();
+class _JourneyState {
+  final bool inJourney;
+  final String fp;
+  final bool suppress;
+  const _JourneyState({
+    required this.inJourney,
+    required this.fp,
+    required this.suppress,
+  });
+}
+
+/// Full-screen force-update UI for the driver app. Matches the user app's
+/// `ForceUpdateScreen` pattern (Bestseed logo in a halo, "Update Required"
+/// title, description, big Update button) with driver-specific branding
+/// (blue primary + logo.jpeg). Mounted via `Get.offAll` from splash so it
+/// owns the entire stack — no dialog-vs-Navigator race.
+class DriverForceUpdateScreen extends StatelessWidget {
+  final bool useInAppUpdate;
+  final String storeUrlAndroid;
+  final String storeUrlIos;
+  final bool allowLater;
+  final String journeyFingerprint;
+
+  /// Optional callback fired when the driver taps "Later" (only visible
+  /// when `allowLater` is true — i.e. mid-journey). The caller passes a
+  /// resume-navigation lambda that navigates the driver back to home,
+  /// since this screen replaced the whole stack.
+  final Future<void> Function()? onLater;
+
+  const DriverForceUpdateScreen({
+    super.key,
+    required this.useInAppUpdate,
+    required this.storeUrlAndroid,
+    required this.storeUrlIos,
+    required this.allowLater,
+    required this.journeyFingerprint,
+    this.onLater,
+  });
+
+  Future<void> _onLaterPressed() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kSkippedJourneyFp, journeyFingerprint);
+    } catch (e) {
+      debugPrint('DriverForceUpdate: failed to persist Later choice: $e');
+    }
+    if (onLater != null) {
+      await onLater!();
+    }
+  }
+
+  Future<void> _onUpdatePressed() async {
+    if (useInAppUpdate) {
+      try {
+        final result = await InAppUpdate.performImmediateUpdate();
+        if (result == AppUpdateResult.success) return;
+        Get.snackbar(
+          'Update Cancelled',
+          'Please tap Update Now again to install the latest version.',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.black87,
+          colorText: Colors.white,
+          margin: const EdgeInsets.all(16),
+          duration: const Duration(seconds: 5),
+        );
+        return;
+      } catch (e) {
+        debugPrint('DriverForceUpdate: performImmediateUpdate threw: $e');
+      }
+    }
+    await _openStore();
+  }
 
   Future<void> _openStore() async {
-    // Prefer the native app scheme so Play Store / App Store opens
-    // directly. Fall back to the https URL if the scheme is not
-    // registered (e.g. Play Store missing on Huawei GMS-free devices).
     final Uri primary;
     final Uri fallback;
     if (Platform.isAndroid) {
-      primary = Uri.parse('market://details?id=$_androidPackageName');
-      fallback = Uri.parse(
-          'https://play.google.com/store/apps/details?id=$_androidPackageName');
+      primary = Uri.parse(_androidStoreDeepLink);
+      fallback = Uri.parse(storeUrlAndroid);
     } else if (Platform.isIOS) {
-      final id = _iosAppStoreId.isEmpty ? _androidPackageName : _iosAppStoreId;
-      primary = Uri.parse('itms-apps://apps.apple.com/app/id$id');
-      fallback = Uri.parse('https://apps.apple.com/app/id$id');
+      final looksLikeAppId = _iosAppStoreId.isNotEmpty;
+      if (looksLikeAppId) {
+        primary = Uri.parse('itms-apps://apps.apple.com/app/id$_iosAppStoreId');
+      } else {
+        primary = Uri.parse(storeUrlIos);
+      }
+      fallback = Uri.parse(storeUrlIos);
     } else {
       return;
     }
-
     try {
       if (await canLaunchUrl(primary)) {
-        await launchUrl(primary, mode: LaunchMode.externalApplication);
-        return;
+        final ok =
+            await launchUrl(primary, mode: LaunchMode.externalApplication);
+        if (ok) return;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DriverForceUpdate: primary launch failed: $e');
+    }
     try {
-      await launchUrl(fallback, mode: LaunchMode.externalApplication);
-    } catch (_) {}
+      final ok =
+          await launchUrl(fallback, mode: LaunchMode.externalApplication);
+      if (ok) return;
+    } catch (e) {
+      debugPrint('DriverForceUpdate: fallback launch failed: $e');
+    }
+    Get.snackbar(
+      'Update Failed',
+      'Could not open the store. Please open Play Store manually and update Drive Bestseed.',
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.black87,
+      colorText: Colors.white,
+      margin: const EdgeInsets.all(16),
+      duration: const Duration(seconds: 6),
+    );
   }
+
+  static const Color _kBrandBlue = Color(0xFF0077C8);
 
   @override
   Widget build(BuildContext context) {
-    // Block Android back-swipe / gesture — the driver cannot bypass this.
     return PopScope(
-      canPop: false,
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 30,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Gradient icon badge
-              Container(
-                width: 76,
-                height: 76,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFF0077C8),
-                      const Color(0xFF0077C8).withValues(alpha: 0.75),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+      canPop: allowLater,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) SystemNavigator.pop();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 150,
+                  height: 150,
+                  decoration: BoxDecoration(
+                    color: _kBrandBlue.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF0077C8).withValues(alpha: 0.35),
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.system_update_alt_rounded,
-                  color: Colors.white,
-                  size: 40,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Update Available',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.roboto(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'A new version of Drive Bestseed is available. Please update from the Play Store to continue.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.roboto(
-                  fontSize: 14,
-                  height: 1.5,
-                  color: Colors.grey.shade700,
-                ),
-              ),
-              const SizedBox(height: 28),
-              // Update Now — the only exit from this dialog.
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: _openStore,
-                  icon: const Icon(Icons.download_rounded, size: 22),
-                  label: Text(
-                    'Update Now',
-                    style: GoogleFonts.roboto(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
+                  alignment: Alignment.center,
+                  child: ClipOval(
+                    child: Image.asset(
+                      'assets/images/logo.jpeg',
+                      width: 118,
+                      height: 118,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.system_update_alt_rounded,
+                        size: 56,
+                        color: _kBrandBlue,
+                      ),
                     ),
                   ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0077C8),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shadowColor: Colors.transparent,
-                    shape: RoundedRectangleBorder(
+                ),
+                const SizedBox(height: 32),
+                Text(
+                  'Update Required',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.roboto(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  allowLater
+                      ? 'A new version of Drive Bestseed is available.\n'
+                          'You can update after finishing your current delivery.'
+                      : 'A newer version of Drive Bestseed is available.\n'
+                          'Please update to continue using the app.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.roboto(
+                    fontSize: 14,
+                    color: Colors.grey.shade700,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 36),
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kBrandBlue.withValues(alpha: 0.28),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: _onUpdatePressed,
+                      icon: const Icon(Icons.download_rounded, size: 22),
+                      label: Text(
+                        Platform.isIOS
+                            ? 'Update from App Store'
+                            : 'Update from Play Store',
+                        style: GoogleFonts.roboto(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
+                          color: Colors.white,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kBrandBlue,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shadowColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+                if (allowLater) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: TextButton(
+                      onPressed: _onLaterPressed,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.grey.shade700,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Later',
+                        style: GoogleFonts.roboto(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
-

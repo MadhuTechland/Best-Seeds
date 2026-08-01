@@ -7,6 +7,9 @@ class ProfileMenuItem extends StatelessWidget {
   final Color? iconColor;
   final bool isLogout;
 
+  /// Unread count shown as a red pill before the chevron. 0 hides it.
+  final int badgeCount;
+
   const ProfileMenuItem({
     super.key,
     required this.icon,
@@ -14,6 +17,7 @@ class ProfileMenuItem extends StatelessWidget {
     this.onTap,
     this.iconColor,
     this.isLogout = false,
+    this.badgeCount = 0,
   });
 
   @override
@@ -55,6 +59,26 @@ class ProfileMenuItem extends StatelessWidget {
                 ),
               ),
             ),
+            if (badgeCount > 0)
+              Container(
+                margin: EdgeInsets.only(right: width * 0.02),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                constraints: const BoxConstraints(minWidth: 20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEF4444),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  badgeCount > 99 ? '99+' : '$badgeCount',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             Icon(
               Icons.chevron_right,
               size: width * 0.06,

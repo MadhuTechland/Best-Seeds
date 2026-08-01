@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bestseeds/announcement/announcement_prompt_service.dart';
+import 'package:bestseeds/announcement/announcement_session.dart';
+import 'package:bestseeds/announcement/announcements_screen.dart';
 import 'package:bestseeds/employee/controllers/notification_controller.dart';
 import 'package:bestseeds/employee/screens/notification_screen.dart';
 import 'package:bestseeds/employee/services/storage_service.dart';
@@ -320,6 +323,13 @@ class NotificationService {
         captureAndPostOnDemandLocation();
         return;
       }
+      // Admin announcement → pop the dialog straight away.
+      if (message.data['type'] == 'announcement') {
+        AnnouncementPromptService.instance
+            .onAnnouncementPush(Map<String, dynamic>.from(message.data));
+        _showLocalNotification(message);
+        return;
+      }
       _showLocalNotification(message);
     });
 
@@ -395,6 +405,16 @@ class NotificationService {
   }
 
   void _handleNotificationTap(Map<String, dynamic> data) {
+    // Announcements exist for both the driver and the vendor side, so this is
+    // handled before the employee-only guard below. Opening from the tray takes
+    // the user to the full list; the dialog itself is driven by
+    // AnnouncementPromptService on resume.
+    if (data['type'] == 'announcement') {
+      if (AnnouncementSession.current() == null) return;
+      Get.to(() => const AnnouncementsScreen());
+      return;
+    }
+
     // Only the employee/vendor side has a notification screen wired up.
     // If no employee session exists, do nothing — splash will route the user
     // and any genuinely-pending tap will be re-issued via handlePendingNotification.
