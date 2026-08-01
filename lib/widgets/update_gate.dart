@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bestseeds/driver/services/active_journey_prefs.dart';
+import 'package:bestseeds/services/itunes_lookup.dart';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -141,15 +142,63 @@ class DriverVersionCheck {
       }
     }
 
-    // ── 2) iOS + Android when Play was unreachable: RC floor ──
+    // Fetch installed version up front — both the iOS iTunes branch and
+    // the Remote Config branch below need it.
+    String currentVersion = '0.0.0';
     try {
-      String currentVersion = '0.0.0';
-      try {
-        final info = await PackageInfo.fromPlatform();
-        currentVersion = info.version;
-      } catch (e) {
-        debugPrint('DriverVersionCheck: PackageInfo failed: $e');
+      final info = await PackageInfo.fromPlatform();
+      currentVersion = info.version;
+    } catch (e) {
+      debugPrint('DriverVersionCheck: PackageInfo failed: $e');
+    }
+
+    // ── 2) iOS: Apple iTunes Lookup API ──
+    // Apple has no equivalent to Google's Play In-App Updates. Query the
+    // public iTunes Lookup endpoint by bundle ID and compare its
+    // `version` field to the installed build. If iTunes answers
+    // authoritatively, trust it and skip Remote Config (same pattern
+    // used for Play above); only fall through to RC if iTunes is
+    // unreachable.
+    //
+    // SAFETY: skip the comparison entirely when currentVersion is still
+    // the '0.0.0' placeholder from a PackageInfo failure — otherwise
+    // _isBelow('0.0.0', anyRealAppStoreVersion) is unconditionally true
+    // and we'd block every iOS driver with no Later button (when not
+    // mid-journey). Better to fall through to RC (whose guard already
+    // blocks the '0.0.0' floor) and ultimately proceed.
+    if (Platform.isIOS && currentVersion != '0.0.0') {
+      final lookup = await ITunesLookup.lookup(
+        bundleId: 'com.driver.bestseed',
+      );
+      if (lookup != null) {
+        if (lookup.trackViewUrl.isNotEmpty) storeIos = lookup.trackViewUrl;
+        if (_isBelow(currentVersion, lookup.version)) {
+          return DriverVersionCheckResult(
+            decision: journey.suppress
+                ? DriverForceUpdateDecision.proceed
+                : DriverForceUpdateDecision.showBlockScreen,
+            useInAppUpdate: false, // iOS has no in-app installer
+            inJourney: journey.inJourney,
+            journeyFingerprint: journey.fp,
+            storeUrlAndroid: storeAndroid,
+            storeUrlIos: storeIos,
+          );
+        }
+        // iTunes said no update — trust it, skip RC.
+        return DriverVersionCheckResult(
+          decision: DriverForceUpdateDecision.proceed,
+          useInAppUpdate: false,
+          inJourney: journey.inJourney,
+          journeyFingerprint: journey.fp,
+          storeUrlAndroid: storeAndroid,
+          storeUrlIos: storeIos,
+        );
       }
+      debugPrint('DriverVersionCheck: iTunes Lookup returned null — falling back to RC');
+    }
+
+    // ── 3) Both platforms: Remote Config floor (emergency backup) ──
+    try {
 
       final rc = FirebaseRemoteConfig.instance;
       await rc.setConfigSettings(RemoteConfigSettings(
