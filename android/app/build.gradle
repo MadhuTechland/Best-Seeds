@@ -14,7 +14,14 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.driver.bestseed"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned to 36 explicitly. `flutter.compileSdkVersion` floats with the
+    // installed Flutter SDK, and `in_app_update` (transitively pulls in
+    // com.google.android.play:app-update:2.1.0) requires compileSdk >= 34.
+    // Any teammate or CI runner on an older Flutter would fail the build
+    // with "requires libraries and applications that depend on it to
+    // compile against version 34 or later". Match the user app which
+    // already pins compileSdk = 36.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -50,7 +57,9 @@ android {
     defaultConfig {
         applicationId = "com.driver.bestseed"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Pinned to 36 (see compileSdk comment above). targetSdk floating
+        // with Flutter would silently regress Play Console review policy.
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

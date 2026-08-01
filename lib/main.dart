@@ -6,9 +6,7 @@ import 'package:bestseeds/firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:bestseeds/routes/app_routes.dart';
-import 'package:bestseeds/widgets/update_gate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:upgrader/upgrader.dart';
 
 late SharedPreferences prefs;
 void main() async {
@@ -39,31 +37,6 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // Single Upgrader instance shared across the whole app so the Play Store
-  // check only runs once per cold start (Upgrader dedupes internally by
-  // instance). Ignore + Later are hidden so the only button is "Update
-  // Now", which deep-links to the driver app's Play Store listing; the
-  // 11.x dialog is modal (no barrier dismiss) so the driver can't bypass.
-  //
-  // TROUBLESHOOTING (2026-07): dialog wasn't firing on a device that had
-  // an older sideloaded APK while Play Store held a newer version.
-  //   - debugLogging  = true       → prints Upgrader's version-check
-  //     result + Play Store scrape output to logcat, filter with
-  //     `adb logcat | grep -i upgrader` while cold-starting the app.
-  //   - durationUntilAlertAgain = 0 → don't suppress the alert after a
-  //     recent check (default is 3 days).
-  //   - minAppVersion = null        → rely only on Play Store's listed
-  //     version, no local floor.
-  // Once auto-updates are verified working reliably in the field, flip
-  // debugLogging back to false and drop the durationUntilAlertAgain
-  // override (defaults are fine for steady-state).
-  static final _upgrader = Upgrader(
-    countryCode: 'IN',
-    languageCode: 'en',
-    debugLogging: true,
-    durationUntilAlertAgain: Duration.zero,
-  );
-
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
@@ -78,16 +51,11 @@ class MyApp extends StatelessWidget {
       ),
       initialRoute: AppRoutes.splash,
       onGenerateRoute: AppRoutes.generateRoute,
-      // Wrap every route in UpdateGate so the force-update dialog can fire on
-      // top of whichever screen is currently mounted (splash, login, home).
-      // The Upgrader singleton above provides the version-check logic; the
-      // UpdateGate renders a custom, beautiful dialog with only an "Update
-      // Now" button (opens Play Store / App Store) — no dismiss, no Later,
-      // no scary "Something went wrong / check Google Play" fallback.
-      builder: (context, child) => UpdateGate(
-        upgrader: _upgrader,
-        child: child ?? const SizedBox.shrink(),
-      ),
+      // Force-update UI is triggered from splash via
+      // DriverVersionCheck.checkForceUpdate (see splash_screen.dart) — it
+      // does Get.offAll(DriverForceUpdateScreen) when needed. Runs at the
+      // top of splash's _checkLoginStatus so it fires before any auth /
+      // navigation happens, matching the pattern used by the user app.
     );
   }
 }

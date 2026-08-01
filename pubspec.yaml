@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.15+16
+version: 1.0.16+17
 
 environment:
   sdk: ^3.6.1
@@ -67,12 +67,18 @@ dependencies:
   wakelock_plus: ^1.2.8
   firebase_core: ^4.4.0
   firebase_messaging: ^16.1.1
+  # Admin-controlled force-update floor. Used as the fallback source of
+  # truth for iOS and for Android when Google Play In-App Updates isn't
+  # available (sideloaded APK, Play Services outage). Key:
+  # `min_driver_app_version`.
+  firebase_remote_config: ^6.0.0
+  # Google Play Core In-App Updates. Android-only; iOS never has a native
+  # equivalent so we rely on Remote Config alone there. Pinned to 4.x —
+  # 5.0.0 requires Dart 3.12 and the current Flutter SDK ships Dart 3.10.
+  in_app_update: ^4.2.5
   # SMS Retriever API for OTP auto-fill (no SMS permission needed).
   # Requires the DLT template to end with the 11-char app hash.
   smart_auth: ^3.2.0
-  # Force-update dialog — checks Play Store on cold start and blocks the
-  # app if the installed versionCode is older than the highest listed one.
-  upgrader: ^11.0.0
 
 dev_dependencies:
   flutter_test:
