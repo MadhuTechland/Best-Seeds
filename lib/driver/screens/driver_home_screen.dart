@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:bestseeds/announcement/announcement_prompt_service.dart';
 import 'package:bestseeds/driver/controllers/driver_permissions_controller.dart';
 import 'package:bestseeds/driver/models/driver_booking_model.dart';
 import 'package:bestseeds/driver/models/driver_model.dart';
@@ -91,6 +92,11 @@ class _DriverDashboardState extends State<DriverDashboard>
     _checkActiveJourney();
     _requestNotificationPermission();
     TrackingAlertService.start();
+
+    // Any announcement the admin sent while this driver was away pops up here.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AnnouncementPromptService.instance.check();
+    });
   }
 
   /// Request notification permission early (on app open) so alert sounds work.
@@ -482,6 +488,8 @@ class _DriverDashboardState extends State<DriverDashboard>
       // panel, so the app + backend stay in sync even when the driver toggles
       // the permission in system settings while on the home screen.
       _permController.refreshFromSystem(sync: true);
+      // An announcement may have been sent while backgrounded.
+      AnnouncementPromptService.instance.check();
     }
   }
 

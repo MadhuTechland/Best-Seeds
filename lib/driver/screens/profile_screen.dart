@@ -1,3 +1,5 @@
+import 'package:bestseeds/announcement/announcement_controller.dart';
+import 'package:bestseeds/announcement/announcements_screen.dart';
 import 'package:bestseeds/driver/controllers/profile_controller.dart';
 import 'package:bestseeds/driver/widgets/driver_permissions_section.dart';
 import 'package:bestseeds/employee/screens/help_screen.dart';
@@ -13,6 +15,8 @@ class DriverProfileScreen extends StatelessWidget {
   DriverProfileScreen({super.key});
 
   final DriverProfileController controller = Get.put(DriverProfileController());
+  // Shared permanent instance — the badge stays in step with the popup service.
+  final AnnouncementController announcementController = AnnouncementController.to;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +44,12 @@ class DriverProfileScreen extends StatelessWidget {
                       title: 'Notification',
                       onTap: () {},
                     ),
+                    Obx(() => ProfileMenuItem(
+                          icon: Icons.campaign_outlined,
+                          title: 'Announcements',
+                          badgeCount: announcementController.unreadCount.value,
+                          onTap: () => Get.to(() => const AnnouncementsScreen()),
+                        )),
                     ProfileMenuItem(
                       icon: Icons.local_shipping_outlined,
                       title: 'My Deliveries',

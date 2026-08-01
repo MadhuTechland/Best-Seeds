@@ -178,32 +178,37 @@ class _UpdateDialog extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Gradient icon badge
+              // Bestseed logo badge — replaces the generic system-update
+              // glyph so the driver sees the brand mark on the "please
+              // update" screen. Falls back to the update icon on any
+              // asset-load failure (missing logo file / renamed asset).
               Container(
-                width: 76,
-                height: 76,
+                width: 96,
+                height: 96,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFF0077C8),
-                      const Color(0xFF0077C8).withValues(alpha: 0.75),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
+                  color: const Color(0xFF0077C8).withValues(alpha: 0.10),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF0077C8).withValues(alpha: 0.35),
+                      color: const Color(0xFF0077C8).withValues(alpha: 0.20),
                       blurRadius: 20,
                       offset: const Offset(0, 8),
                     ),
                   ],
                 ),
-                child: const Icon(
-                  Icons.system_update_alt_rounded,
-                  color: Colors.white,
-                  size: 40,
+                alignment: Alignment.center,
+                child: ClipOval(
+                  child: Image.asset(
+                    'assets/images/logo.jpeg',
+                    width: 82,
+                    height: 82,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.system_update_alt_rounded,
+                      color: Color(0xFF0077C8),
+                      size: 40,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
