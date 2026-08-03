@@ -6,11 +6,15 @@ import 'package:bestseeds/firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:bestseeds/routes/app_routes.dart';
+import 'package:bestseeds/utils/app_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 late SharedPreferences prefs;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Loud log if lib/utils/secrets.dart still holds the template value
+  // (otherwise a missing key just shows as a blank map with no explanation).
+  AppKeys.warnIfMissing();
   prefs = await SharedPreferences.getInstance();
 
   // Initialize Firebase

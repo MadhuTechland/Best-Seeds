@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:bestseeds/utils/app_cache_helper.dart';
+import 'package:bestseeds/utils/app_keys.dart';
 
 class GoogleMapsService {
-  static const String _apiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
+  /// From the gitignored lib/utils/secrets.dart — see [AppKeys].
+  static const String _apiKey = AppKeys.googleMaps;
 
   // ───────────────────────────────────────────────────────────────────────
   // PERSISTENT RESPONSE CACHE (SQLite, via AppCacheHelper)

@@ -10,6 +10,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:bestseeds/utils/app_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -28,7 +29,8 @@ const String _baseUrl =
     'https://aqua.bestseed.in/api/';
 const String _locationUpdateEndpoint = 'driver/location/update';
 const String _trackingAlertEndpoint = 'driver/tracking-alert';
-const String _googleApiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
+/// From the gitignored lib/utils/secrets.dart — see [AppKeys].
+const String _googleApiKey = AppKeys.googleMaps;
 const String _tokenKey = 'driver_token';
 const String _serviceRunningKey = 'bg_location_service_running';
 

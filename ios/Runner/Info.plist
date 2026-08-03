@@ -68,6 +68,10 @@
 	<string>Best Seeds needs to save photos to your library.</string>
 	<key>FirebaseMessagingAutoInitEnabled</key>
 	<true/>
+	<!-- Filled in from ios/Flutter/Secrets.xcconfig at build time and read
+	     by AppDelegate.swift — never hard-code the key in source. -->
+	<key>GoogleMapsApiKey</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.driver.bestseed.processing</string>

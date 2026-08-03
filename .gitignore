@@ -43,3 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android signing (contains secrets — never commit)
+/android/key.properties
+*.jks
+*.keystore
+
+# API keys (never commit) — copy the .example files and fill in real values.
+# secrets.dart feeds the Dart code AND the Android manifest (build.gradle
+# reads it); Secrets.xcconfig feeds the iOS Google Maps SDK.
+/lib/utils/secrets.dart
+/ios/Flutter/Secrets.xcconfig

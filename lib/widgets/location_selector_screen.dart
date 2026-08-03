@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:bestseeds/utils/app_keys.dart';
 import 'package:bestseeds/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
@@ -336,7 +337,8 @@ class LocationPickerScreen extends StatefulWidget {
 }
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
-  static const String _apiKey = 'AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I';
+  /// From the gitignored lib/utils/secrets.dart — see [AppKeys].
+  static const String _apiKey = AppKeys.googleMaps;
 
   GoogleMapController? _mapController;
   LatLng? _selectedLocation;

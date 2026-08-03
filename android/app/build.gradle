@@ -12,6 +12,26 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// Google Maps key for the manifest, read straight out of the gitignored
+// lib/utils/secrets.dart — the same file the Dart code uses, so the key is
+// defined in exactly one place and no build flag is needed. CI may set a
+// GOOGLE_MAPS_API_KEY environment variable instead.
+def googleMapsApiKey = System.getenv('GOOGLE_MAPS_API_KEY')
+if (!googleMapsApiKey) {
+    def secretsFile = rootProject.file('../lib/utils/secrets.dart')
+    if (secretsFile.exists()) {
+        def matcher = secretsFile.text =~ /googleMaps\s*=\s*'([^']*)'/
+        googleMapsApiKey = matcher ? matcher[0][1] : ''
+    } else {
+        logger.warn('⚠️  lib/utils/secrets.dart not found — the Google Maps key will be ' +
+                'empty and maps will render blank. Copy secrets.example.dart to secrets.dart.')
+        googleMapsApiKey = ''
+    }
+}
+if (!googleMapsApiKey) {
+    logger.warn('⚠️  googleMaps key missing/empty in secrets.dart — maps will render blank.')
+}
+
 android {
     namespace = "com.driver.bestseed"
     // Pinned to 36 explicitly. `flutter.compileSdkVersion` floats with the
@@ -62,6 +82,10 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Substituted into ${GOOGLE_MAPS_API_KEY} in AndroidManifest.xml so the
+        // key never appears in a tracked file.
+        manifestPlaceholders += [GOOGLE_MAPS_API_KEY: googleMapsApiKey]
     }
 
     buildTypes {

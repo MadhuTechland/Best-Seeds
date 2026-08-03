@@ -22,9 +22,12 @@
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
 
+        <!-- Google Maps API Key — injected by build.gradle from the gitignored
+             lib/utils/secrets.dart (or the GOOGLE_MAPS_API_KEY env var on CI).
+             Never hard-code the key here. -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyA111b89Exrm83RRWF-2hP1EPeUxvos87I"/>
+            android:value="${GOOGLE_MAPS_API_KEY}"/>
 
         <activity
             android:name=".MainActivity"
