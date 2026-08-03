@@ -44,11 +44,16 @@ class _SplashScreenState extends State<SplashScreen> {
               storeUrlIos: v.storeUrlIos,
               allowLater: v.inJourney,
               journeyFingerprint: v.journeyFingerprint,
-              // "Later" resumes the auth flow — re-invoke this same
-              // routine after the driver's choice is persisted, so the
-              // rest of splash (auth check, home navigation) proceeds.
+              // "Later" resumes the auth flow. NOTE: the `Get.offAll`
+              // above already replaced this route, so THIS State is
+              // disposed by the time the driver taps Later — `mounted`
+              // is false and a `if (mounted) _checkLoginStatus()` guard
+              // would silently drop the tap, stranding the driver on the
+              // update screen. Restart splash instead: the skip
+              // fingerprint has just been persisted, so the next
+              // check returns `proceed` and auth continues normally.
               onLater: () async {
-                if (mounted) _checkLoginStatus();
+                Get.offAll(() => const SplashScreen());
               },
             ));
         return;

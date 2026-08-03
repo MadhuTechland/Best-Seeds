@@ -247,11 +247,23 @@ class DriverVersionCheck {
 
   static Future<_JourneyState> _readJourneyState() async {
     // TEMP dev override — see _kForceInJourneyForTest above.
+    // `suppress` must be read from the persisted fingerprint, NOT
+    // hardcoded false: hardcoding it means tapping "Later" re-shows the
+    // gate on every relaunch, so the skip-persistence path this flag
+    // exists to exercise can never actually be tested.
     if (_kForceInJourneyForTest) {
-      return const _JourneyState(
+      const testFp = 'test_journey_fp';
+      bool skipped = false;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        skipped = prefs.getString(_kSkippedJourneyFp) == testFp;
+      } catch (e) {
+        debugPrint('DriverVersionCheck: skip-fp read failed: $e');
+      }
+      return _JourneyState(
         inJourney: true,
-        fp: 'test_journey_fp',
-        suppress: false,
+        fp: testFp,
+        suppress: skipped,
       );
     }
     try {
