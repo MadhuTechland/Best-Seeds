@@ -332,19 +332,42 @@ class BookingCounts {
   final int current;
   final int past;
 
+  /// Count per exact booking status, keyed by the status value
+  /// (1=New, 2=Confirmed, 3=Driver Assigned, 4=In Journey, 5=Delivered,
+  /// 6=Failed). Backs the badges on the status tabs. Empty when talking to an
+  /// older backend that doesn't send `by_status` — those tabs then show no
+  /// badge rather than a wrong one.
+  final Map<int, int> byStatus;
+
   BookingCounts({
     required this.all,
     required this.newBookings,
     required this.current,
     required this.past,
+    this.byStatus = const {},
   });
 
+  /// Count for [status], or null when the backend didn't report it.
+  int? forStatus(int? status) => status == null ? null : byStatus[status];
+
   factory BookingCounts.fromJson(Map<String, dynamic> json) {
+    final raw = json['by_status'];
+    final byStatus = <int, int>{};
+    if (raw is Map) {
+      raw.forEach((key, value) {
+        // JSON object keys arrive as strings even though the API sends ints.
+        final status = key is int ? key : int.tryParse('$key');
+        final count = value is int ? value : int.tryParse('$value');
+        if (status != null && count != null) byStatus[status] = count;
+      });
+    }
+
     return BookingCounts(
       all: json['all'] ?? 0,
       newBookings: json['new'] ?? 0,
       current: json['current'] ?? 0,
       past: json['past'] ?? 0,
+      byStatus: byStatus,
     );
   }
 }

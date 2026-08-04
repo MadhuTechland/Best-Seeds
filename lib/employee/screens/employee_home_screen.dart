@@ -75,6 +75,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard>
   int _currentCount = 0;
   int _pastCount = 0;
 
+  /// Per-status counts from the API, backing the badges on the status tabs.
+  Map<int, int> _statusCounts = const {};
+
   // Filter options
   String? _selectedBookingType; // hatchery, spot, vehicle
   String? _selectedVehicleAvailability; // assigned, not_assigned
@@ -223,6 +226,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard>
           _newCount = cached.counts.newBookings;
           _currentCount = cached.counts.current;
           _pastCount = cached.counts.past;
+          _statusCounts = cached.counts.byStatus;
           _hasMore = cached.pagination.currentPage < cached.pagination.lastPage;
           _isLoading = false;
         });
@@ -259,6 +263,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard>
         _newCount = response.counts.newBookings;
         _currentCount = response.counts.current;
         _pastCount = response.counts.past;
+        _statusCounts = response.counts.byStatus;
         _hasMore =
             response.pagination.currentPage < response.pagination.lastPage;
         _currentPage = 1;
@@ -1081,21 +1086,27 @@ class _EmployeeDashboardState extends State<EmployeeDashboard>
   }
 
   Widget _buildTabBar(double width, double height) {
-    // Counts come from the backend only for New Bookings and All; the exact
-    // status tabs (In Journey / Driver Assigned / Delivered / Failed) have no
-    // backend count, so they show no badge.
+    // Every tab shows a badge. The grouped tabs use their own totals; the
+    // exact-status tabs (Confirmed / Driver Assigned / In Journey / Delivered
+    // / Failed) read the per-status map the API now returns. A tab with
+    // nothing in it shows no badge rather than a "0".
+    int? countFor(Map<String, dynamic> def) {
+      int? value;
+      if (def['tab'] == 'new') {
+        value = _newCount;
+      } else if (def['tab'] == 'current') {
+        value = _currentCount;
+      } else if (def['label'] == 'All') {
+        value = _allCount;
+      } else {
+        value = _statusCounts[def['status']];
+      }
+      return (value != null && value > 0) ? value : null;
+    }
+
     final tabs = [
       for (final def in _tabDefs)
-        {
-          'label': def['label'],
-          'count': def['tab'] == 'new'
-              ? (_newCount > 0 ? _newCount : null)
-              : def['tab'] == 'current'
-                  ? (_currentCount > 0 ? _currentCount : null)
-                  : def['label'] == 'All'
-                      ? (_allCount > 0 ? _allCount : null)
-                      : null,
-        },
+        {'label': def['label'], 'count': countFor(def)},
     ];
 
     return Container(
