@@ -83,7 +83,14 @@ class TrackingAlertService {
       );
       print('TRACKING ALERT: Sent alert -> $issueType');
     } catch (e) {
-      print('TRACKING ALERT: Failed to send alert -> $e');
+      // A rejected alert used to vanish here. The server validated issue_type
+      // against a different vocabulary than the one this service emits, so
+      // every alert except gps_off came back 422 and the admin bell stayed
+      // empty — with nothing in the logs to say why. Re-arm so the next sweep
+      // retries, and make the failure loud.
+      _lastDetectedIssueType = null;
+      print('TRACKING ALERT: REJECTED for "$issueType" -> $e '
+          '(will retry on next check)');
     }
   }
 

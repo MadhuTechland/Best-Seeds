@@ -93,6 +93,24 @@ android {
             signingConfig = signingConfigs.release
         }
     }
+
+    // Ship the bundle as ONE self-contained APK instead of a base plus ABI /
+    // density / language splits.
+    //
+    // play-core (pulled in by in_app_update) refuses to start the app when the
+    // installed base APK is missing any of its splits, showing "Something went
+    // wrong — Check that Google Play is enabled on your device...". That was
+    // happening on UPDATE only: a fresh install delivered a matching set, but
+    // an update could leave the device with a base whose splits didn't apply,
+    // and a full uninstall/reinstall cleared it.
+    //
+    // With no splits there is nothing to go missing, so the check can never
+    // trip. The cost is download size — every ABI ships in the one APK.
+    bundle {
+        language { enableSplit = false }
+        density { enableSplit = false }
+        abi { enableSplit = false }
+    }
 }
 
 dependencies {

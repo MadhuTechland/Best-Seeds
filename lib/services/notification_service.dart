@@ -46,9 +46,9 @@ Future<void> _showBackgroundNotification(RemoteMessage message) async {
       ?.createNotificationChannel(_highImportanceChannel);
 
   // BigTextStyle so multi-line bodies (e.g. "New Booking received" with
-  // booking id / booked by / hatchery name on separate lines) render every
-  // line when the user expands the notification instead of being cropped to
-  // one line by the system tray.
+  // booking id / hatchery name on separate lines) render every line when the
+  // user expands the notification instead of being cropped to one line by the
+  // system tray.
   final details = NotificationDetails(
     android: AndroidNotificationDetails(
       'high_importance_channel',

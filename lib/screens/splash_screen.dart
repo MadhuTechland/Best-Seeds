@@ -14,7 +14,16 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  const SplashScreen({super.key, this.skipUpdateGate = false});
+
+  /// Set when re-entering splash after the driver tapped "Later" on the
+  /// force-update screen.
+  ///
+  /// Only the update gate is skipped — everything after it still runs, because
+  /// that is where the session is validated, the FCM token is registered and
+  /// (critically for a driver mid-journey) background location tracking is
+  /// restarted via [BackgroundLocationService.restartIfNeeded].
+  final bool skipUpdateGate;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -34,35 +43,58 @@ class _SplashScreenState extends State<SplashScreen> {
     // the pattern used by the user app. Doing it here (rather than via a
     // MaterialApp.builder wrapper) avoids the dialog-vs-Navigator race
     // where splash's own Get.offAllNamed would pop the dialog.
-    try {
-      final v = await DriverVersionCheck.checkForceUpdate();
-      if (v.decision == DriverForceUpdateDecision.showBlockScreen) {
-        if (!mounted) return;
-        Get.offAll(() => DriverForceUpdateScreen(
-              useInAppUpdate: v.useInAppUpdate,
-              storeUrlAndroid: v.storeUrlAndroid,
-              storeUrlIos: v.storeUrlIos,
-              allowLater: v.inJourney,
-              journeyFingerprint: v.journeyFingerprint,
-              // "Later" resumes the auth flow. NOTE: the `Get.offAll`
-              // above already replaced this route, so THIS State is
-              // disposed by the time the driver taps Later — `mounted`
-              // is false and a `if (mounted) _checkLoginStatus()` guard
-              // would silently drop the tap, stranding the driver on the
-              // update screen. Restart splash instead: the skip
-              // fingerprint has just been persisted, so the next
-              // check returns `proceed` and auth continues normally.
-              onLater: () async {
-                Get.offAll(() => const SplashScreen());
-              },
-            ));
-        return;
+    //
+    // Skipped when we got here from "Later": re-running the check would cost
+    // up to ~14 s (Play 6 s + Remote Config 6 s + the delay below) staring at
+    // a frozen screen, and could bounce the driver straight back to the gate
+    // if the journey fingerprint no longer matched. Everything AFTER the gate
+    // still runs — that is where the session is validated, the FCM token is
+    // registered and background tracking is restarted.
+    if (!widget.skipUpdateGate) {
+      try {
+        final v = await DriverVersionCheck.checkForceUpdate();
+        if (v.decision == DriverForceUpdateDecision.showBlockScreen) {
+          if (!mounted) return;
+          Get.offAll(() => DriverForceUpdateScreen(
+                useInAppUpdate: v.useInAppUpdate,
+                storeUrlAndroid: v.storeUrlAndroid,
+                storeUrlIos: v.storeUrlIos,
+                allowLater: v.inJourney,
+                journeyFingerprint: v.journeyFingerprint,
+                // "Later" re-enters splash with the gate disabled.
+                //
+                // It used to restart splash plainly, which replayed the whole
+                // gate before the driver saw anything: Play In-App Update (6 s
+                // timeout) + Remote Config fetch (6 s timeout, and
+                // minimumFetchInterval is zero so it always hits the network) +
+                // the 2 s branding delay. Mid-journey on a weak signal that is
+                // many seconds of an apparently frozen screen — and if the
+                // journey fingerprint no longer matched on the way back, the
+                // gate simply reappeared. Both read as "Later does nothing".
+                //
+                // Skipping the gate (rather than jumping straight to
+                // driverHome) keeps the rest of splash: token validation, FCM
+                // registration, the hasLocation check, and above all
+                // BackgroundLocationService.restartIfNeeded — without which a
+                // driver who taps Later mid-journey would lose GPS tracking for
+                // the remainder of the trip.
+                onLater: () async {
+                  Get.offAll(() => const SplashScreen(skipUpdateGate: true));
+                },
+              ));
+          return;
+        }
+      } catch (e) {
+        debugPrint('Splash: DriverVersionCheck failed (non-fatal): $e');
       }
-    } catch (e) {
-      debugPrint('Splash: DriverVersionCheck failed (non-fatal): $e');
     }
 
-    await Future.delayed(const Duration(seconds: 2));
+    // Cosmetic branding pause — cold start only. Coming back from "Later" the
+    // driver has already been staring at the gate, so don't add two more
+    // seconds before they get into the app.
+    if (!widget.skipUpdateGate) {
+      await Future.delayed(const Duration(seconds: 2));
+    }
 
     final employeeStorage = StorageService();
     final driverStorage = DriverStorageService();
@@ -88,7 +120,10 @@ class _SplashScreenState extends State<SplashScreen> {
       try {
         final validate = await http.get(
           Uri.parse(AppConstants.baseUrl + AppConstants.employeeProfileApi),
-          headers: {'Authorization': 'Bearer ${employee.token}', 'Accept': 'application/json'},
+          headers: {
+            'Authorization': 'Bearer ${employee.token}',
+            'Accept': 'application/json'
+          },
         ).timeout(const Duration(seconds: 5));
         if (validate.statusCode == 401) {
           await employeeStorage.logout();
@@ -157,9 +192,12 @@ class _SplashScreenState extends State<SplashScreen> {
       // api_clients.dart. Only logout if two consecutive 401s in a row.
       try {
         Future<http.Response> validate() => http.get(
-          Uri.parse(AppConstants.baseUrl + AppConstants.driverProfileApi),
-          headers: {'Authorization': 'Bearer ${driver.token}', 'Accept': 'application/json'},
-        ).timeout(const Duration(seconds: 5));
+              Uri.parse(AppConstants.baseUrl + AppConstants.driverProfileApi),
+              headers: {
+                'Authorization': 'Bearer ${driver.token}',
+                'Accept': 'application/json'
+              },
+            ).timeout(const Duration(seconds: 5));
 
         var resp = await validate();
         if (resp.statusCode == 401) {
@@ -214,7 +252,8 @@ class _SplashScreenState extends State<SplashScreen> {
                   );
                   print('Splash: Driver location saved to backend');
                 } catch (e) {
-                  print('Splash: Failed to save driver location to backend: $e');
+                  print(
+                      'Splash: Failed to save driver location to backend: $e');
                 }
 
                 // Navigate to home
