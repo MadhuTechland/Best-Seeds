@@ -20,6 +20,11 @@ class CustomMarkerHelper {
       final ByteData? byteData = await fi.image.toByteData(
         format: ui.ImageByteFormat.png,
       );
+      // The PNG bytes are a copy, so the decoded image and codec can go now.
+      // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+      // finalizer — on iOS that lag lets marker images accumulate.
+      fi.image.dispose();
+      codec.dispose();
 
       if (byteData != null) {
         return BitmapDescriptor.bytes(byteData.buffer.asUint8List());
@@ -48,6 +53,11 @@ class CustomMarkerHelper {
       final ByteData? byteData = await fi.image.toByteData(
         format: ui.ImageByteFormat.png,
       );
+      // The PNG bytes are a copy, so the decoded image and codec can go now.
+      // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+      // finalizer — on iOS that lag lets marker images accumulate.
+      fi.image.dispose();
+      codec.dispose();
 
       if (byteData != null) {
         return BitmapDescriptor.bytes(byteData.buffer.asUint8List());
@@ -76,6 +86,11 @@ class CustomMarkerHelper {
       final ByteData? byteData = await fi.image.toByteData(
         format: ui.ImageByteFormat.png,
       );
+      // The PNG bytes are a copy, so the decoded image and codec can go now.
+      // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+      // finalizer — on iOS that lag lets marker images accumulate.
+      fi.image.dispose();
+      codec.dispose();
 
       if (byteData != null) {
         return BitmapDescriptor.bytes(byteData.buffer.asUint8List());
@@ -152,6 +167,10 @@ class CustomMarkerHelper {
       size.toInt(),
     );
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    // The PNG bytes are a copy, so the decoded image and codec can go now.
+    // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+    // finalizer — on iOS that lag lets marker images accumulate.
+    img.dispose();
 
     if (data != null) {
       return BitmapDescriptor.bytes(data.buffer.asUint8List());
@@ -243,6 +262,10 @@ class CustomMarkerHelper {
       size.toInt(),
     );
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    // The PNG bytes are a copy, so the decoded image and codec can go now.
+    // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+    // finalizer — on iOS that lag lets marker images accumulate.
+    img.dispose();
 
     if (data != null) {
       return BitmapDescriptor.bytes(data.buffer.asUint8List());
@@ -366,6 +389,10 @@ class CustomMarkerHelper {
       size.toInt(),
     );
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    // The PNG bytes are a copy, so the decoded image and codec can go now.
+    // ui.Image holds NATIVE memory that Dart's GC only reclaims via a
+    // finalizer — on iOS that lag lets marker images accumulate.
+    img.dispose();
 
     if (data != null) {
       return BitmapDescriptor.bytes(data.buffer.asUint8List());

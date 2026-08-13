@@ -762,15 +762,14 @@ class GoogleMapsService {
               ? cumulativeDistances[driverSplitIndex]
               : 0;
 
-      // Determine number of stops based on route distance (minimum 3)
-      int numStops;
-      if (totalDistanceMeters < 200000) {
-        numStops = min(3, maxStops);
-      } else if (totalDistanceMeters < 500000) {
-        numStops = min(5, maxStops);
-      } else {
-        numStops = maxStops;
-      }
+      // Use maxStops directly — the caller (TrackingStopsService) has already
+      // worked out the right count from the route distance.
+      //
+      // This used to clamp to 3 stops under 200 km and 5 under 500 km, which
+      // silently overrode the caller: a 438 km vendor run asked for 20 stops
+      // and got 5, so long legs between drops showed almost nothing. The user
+      // app removed the same override earlier; the vendor app never did.
+      final int numStops = maxStops;
 
       // Sample evenly-spaced intermediate stops
       List<Map<String, dynamic>> stops = [];

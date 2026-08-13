@@ -509,10 +509,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
           polylines.add(
             Polyline(
               polylineId: const PolylineId('completed'),
-              points: completedRoute,
+              points: _simplifyForRender(completedRoute),
               color: Colors.green,
               width: 5,
-              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+              patterns: _routePattern(completedRoute),
             ),
           );
           // Remaining route: split into forward (blue) + return (yellow)
@@ -543,10 +543,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
           polylines.add(
             Polyline(
               polylineId: const PolylineId('completed'),
-              points: completedFromApi,
+              points: _simplifyForRender(completedFromApi),
               color: Colors.green,
               width: 5,
-              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+              patterns: _routePattern(completedFromApi),
             ),
           );
           // Remaining: split into forward (blue) + return (yellow)
@@ -563,10 +563,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
           polylines.add(
             Polyline(
               polylineId: const PolylineId('full_route'),
-              points: remainingPointsRoute,
+              points: _simplifyForRender(remainingPointsRoute),
               color: const Color(0xFF0077C8),
               width: 5,
-              patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+              patterns: _routePattern(remainingPointsRoute),
             ),
           );
         }
@@ -694,10 +694,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
         updatedPolylines.add(
           Polyline(
             polylineId: const PolylineId('remaining'),
-            points: remainingPoints,
+            points: _simplifyForRender(remainingPoints),
             color: const Color(0xFF0077C8),
             width: 4,
-            patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+            patterns: _routePattern(remainingPoints),
           ),
         );
       }
@@ -2056,10 +2056,10 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
     polylines.add(
       Polyline(
         polylineId: const PolylineId('remaining'),
-        points: routePoints,
+        points: _simplifyForRender(routePoints),
         color: const Color(0xFF0077C8), // blue
         width: 5,
-        patterns: [PatternItem.dash(20), PatternItem.gap(10)],
+        patterns: _routePattern(routePoints),
       ),
     );
   }
@@ -2311,6 +2311,99 @@ class _VehicleTrackingMapScreenState extends State<VehicleTrackingMapScreen>
   // ══════════════════════════════════════════════════════════════════════
 
   /// Haversine distance in meters between two LatLng points.
+  /// Dash pattern for a route line — or solid (empty list) when the route is
+  /// long enough that dashing breaks on iOS.
+  ///
+  /// ROOT CAUSE (verified on device in the customer app against live bookings
+  /// #1060/#1061/#1062, and reported here in the vendor app too):
+  /// iOS renders `PatternItem.dash/gap` by generating GMSStyleSpans along the
+  /// path. On a long route the spans run out before the line does, so the map
+  /// draws only the leading portion and stops — the polyline handed to it is
+  /// complete (the render log showed the final point WAS the destination), but
+  /// the drawn line ended early. Android implements patterns natively and was
+  /// never affected, which is why this only reproduced on iPhones.
+  ///
+  /// Evidence for the threshold: a 183 km route drew correctly with dashes;
+  /// 324 km and 506 km both truncated. 75 km sits well below the known-good
+  /// case, so short city runs keep the dashed styling and anything long enough
+  /// to be at risk renders solid.
+  static const double _maxDashedRouteMeters = 75000;
+
+  List<PatternItem> _routePattern(List<LatLng> pts) {
+    if (pts.length < 2) return const <PatternItem>[];
+    double metres = 0;
+    for (int i = 1; i < pts.length; i++) {
+      metres += _haversineDistance(pts[i - 1], pts[i]);
+      if (metres > _maxDashedRouteMeters) {
+        return const <PatternItem>[]; // solid — early out
+      }
+    }
+    return [PatternItem.dash(20), PatternItem.gap(10)];
+  }
+
+  /// Perpendicular distance from [p] to segment [a]→[b] in metres, via a local
+  /// equirectangular projection — cheap and accurate well under a kilometre.
+  double _perpDistMeters(LatLng p, LatLng a, LatLng b) {
+    const mPerDegLat = 111320.0;
+    final mPerDegLng = 111320.0 * cos(a.latitude * pi / 180.0);
+    final px = (p.longitude - a.longitude) * mPerDegLng;
+    final py = (p.latitude - a.latitude) * mPerDegLat;
+    final bx = (b.longitude - a.longitude) * mPerDegLng;
+    final by = (b.latitude - a.latitude) * mPerDegLat;
+    final len2 = bx * bx + by * by;
+    if (len2 == 0) return sqrt(px * px + py * py);
+    final t = ((px * bx + py * by) / len2).clamp(0.0, 1.0);
+    final dx = px - t * bx;
+    final dy = py - t * by;
+    return sqrt(dx * dx + dy * dy);
+  }
+
+  /// Ramer–Douglas–Peucker simplification, for RENDERING ONLY.
+  ///
+  /// A multi-drop route comes back from Directions at full step resolution —
+  /// ~11,600 points for a 3-leg 500 km run — and every one of those became a
+  /// vertex in a single native polyline. 8 m tolerance is far below what is
+  /// visible at any usable zoom, so the drawn route is unchanged while the
+  /// native map does ~90% less work. Stored polylines keep full resolution:
+  /// snapping and progress maths read those.
+  ///
+  /// Iterative (explicit stack) rather than recursive — a long route could nest
+  /// deeply enough to matter.
+  List<LatLng> _simplifyForRender(List<LatLng> pts,
+      {double toleranceMeters = 8.0}) {
+    if (pts.length <= 2) return pts;
+    final keep = List<bool>.filled(pts.length, false);
+    keep[0] = true;
+    keep[pts.length - 1] = true;
+    final stack = <List<int>>[
+      [0, pts.length - 1]
+    ];
+    while (stack.isNotEmpty) {
+      final seg = stack.removeLast();
+      final first = seg[0];
+      final last = seg[1];
+      double maxD = 0.0;
+      int idx = -1;
+      for (int i = first + 1; i < last; i++) {
+        final d = _perpDistMeters(pts[i], pts[first], pts[last]);
+        if (d > maxD) {
+          maxD = d;
+          idx = i;
+        }
+      }
+      if (idx != -1 && maxD > toleranceMeters) {
+        keep[idx] = true;
+        stack.add([first, idx]);
+        stack.add([idx, last]);
+      }
+    }
+    final out = <LatLng>[];
+    for (int i = 0; i < pts.length; i++) {
+      if (keep[i]) out.add(pts[i]);
+    }
+    return out;
+  }
+
   double _haversineDistance(LatLng a, LatLng b) {
     const earthRadius = 6371000.0;
     final dLat = (b.latitude - a.latitude) * pi / 180;
