@@ -1196,10 +1196,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
                 polylines.add(
                   Polyline(
                     polylineId: const PolylineId('remaining'),
-                    points: bluePoints,
+                    points: _simplifyForRender(bluePoints),
                     color: const Color(0xFF1A73E8),
                     width: 5,
-                    patterns: [PatternItem.dot, PatternItem.gap(10)],
+                    patterns: _routePattern(bluePoints),
                   ),
                 );
               }
@@ -1209,10 +1209,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
             polylines.add(
               Polyline(
                 polylineId: const PolylineId('remaining'),
-                points: remainingPointsRoute,
+                points: _simplifyForRender(remainingPointsRoute),
                 color: const Color(0xFF1A73E8),
                 width: 5,
-                patterns: [PatternItem.dot, PatternItem.gap(10)],
+                patterns: _routePattern(remainingPointsRoute),
               ),
             );
           }
@@ -1224,10 +1224,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
           polylines.add(
             Polyline(
               polylineId: const PolylineId('full_route'),
-              points: _fullPolyline,
+              points: _simplifyForRender(_fullPolyline),
               color: const Color(0xFF1A73E8),
               width: 5,
-              patterns: [PatternItem.dot, PatternItem.gap(10)],
+              patterns: _routePattern(_fullPolyline),
             ),
           );
         }
@@ -1263,10 +1263,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
           polylines.add(
             Polyline(
               polylineId: const PolylineId('remaining'),
-              points: pts,
+              points: _simplifyForRender(pts),
               color: const Color(0xFF1A73E8),
               width: 5,
-              patterns: [PatternItem.dot, PatternItem.gap(10)],
+              patterns: _routePattern(pts),
             ),
           );
         }
@@ -1369,7 +1369,7 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
         })
         .map((pt) {
       return <String, dynamic>{
-        'name': pt['name']?.toString() ?? 'Stop',
+        'name': pt['name']?.toString().trim() ?? '',
         'lat': (pt['lat'] as num?)?.toDouble() ?? 0.0,
         'lng': (pt['lng'] as num?)?.toDouble() ?? 0.0,
         'dist_fraction': 0.0,
@@ -1623,7 +1623,7 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
         fraction = _fullRouteCumulativeDistances[bestIdx] / totalDist;
       }
       return <String, dynamic>{
-        'name': s['name']?.toString() ?? 'Stop',
+        'name': s['name']?.toString().trim() ?? '',
         'lat': sLat,
         'lng': sLng,
         'dist_fraction': fraction,
@@ -1723,15 +1723,22 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
       }
       if (!dup) upcomingMerged.add(s);
     }
-    if (driverForOrder != null) {
-      double distFromDriver(Map<String, dynamic> s) => _haversineDistance(
-          driverForOrder, LatLng(s['lat'] as double, s['lng'] as double));
-      upcomingMerged
-          .sort((a, b) => distFromDriver(a).compareTo(distFromDriver(b)));
-    } else {
-      upcomingMerged.sort((a, b) => (a['dist_fraction'] as double)
-          .compareTo(b['dist_fraction'] as double));
-    }
+    // ALWAYS order by position ALONG THE ROUTE, never by straight-line distance
+    // from the driver.
+    //
+    // Crow-flies ordering only agrees with travel order while a route heads
+    // steadily away from its origin. A multi-drop run that doubles back breaks
+    // it: on Hyderabad → Suryapet → Vijayawada → Rajahmundry → Tirupati →
+    // Chennai, Rajahmundry sits far east (81.8E) and Tirupati is back
+    // south-west (79.4E), so stops the truck reaches AFTER Rajahmundry are
+    // physically CLOSER to the origin and sort ahead of it. Reported in the
+    // customer app as "from priority 3 onwards location timeline is wrong";
+    // this screen carried the identical logic.
+    //
+    // `dist_fraction` is distance along the actual polyline, so it stays
+    // monotonic in travel order however the route bends.
+    upcomingMerged.sort((a, b) => (a['dist_fraction'] as double)
+        .compareTo(b['dist_fraction'] as double));
     final allStops = [...passedFromApi, ...upcomingMerged];
 
     _enforceMonotonicPassedAt(allStops);
@@ -1824,10 +1831,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
       updatedPolylines.add(
         Polyline(
           polylineId: const PolylineId('remaining'),
-          points: List<LatLng>.from(_fullPolyline),
+          points: _simplifyForRender(List<LatLng>.from(_fullPolyline)),
           color: const Color(0xFF1A73E8),
           width: 5,
-          patterns: [PatternItem.dot, PatternItem.gap(10)],
+          patterns: _routePattern(List<LatLng>.from(_fullPolyline)),
         ),
       );
     }
@@ -2144,6 +2151,102 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
   }
 
   /// Haversine distance in meters between two LatLng points.
+  /// Dash/dot pattern for a route line — or solid (empty list) when the route
+  /// is long enough that patterning breaks on iOS.
+  ///
+  /// ROOT CAUSE (verified on device in the customer app, live bookings
+  /// #1060/#1061/#1062, and reported here too):
+  /// iOS renders `PatternItem` dot/dash + gap by generating GMSStyleSpans along
+  /// the path. On a long route the spans run out before the line does, so the
+  /// map draws only the leading portion and stops — the polyline handed to it
+  /// is complete (the render log showed the final point WAS the destination),
+  /// but the drawn line ended early. Android implements patterns natively and
+  /// was never affected, which is why this only reproduced on iPhones.
+  ///
+  /// `PatternItem.dot` is the worst case: a dot is effectively a zero-length
+  /// dash, so it needs far more spans per kilometre than dash(20) does.
+  ///
+  /// Evidence for the threshold: a 183 km route drew correctly with dashes;
+  /// 324 km and 506 km both truncated. 75 km sits well below the known-good
+  /// case, so short city runs keep the patterned styling.
+  static const double _maxPatternedRouteMeters = 75000;
+
+  List<PatternItem> _routePattern(List<LatLng> pts) {
+    if (pts.length < 2) return const <PatternItem>[];
+    double metres = 0;
+    for (int i = 1; i < pts.length; i++) {
+      metres += _patternDistMeters(pts[i - 1], pts[i]);
+      if (metres > _maxPatternedRouteMeters) {
+        return const <PatternItem>[]; // solid — early out
+      }
+    }
+    return [PatternItem.dot, PatternItem.gap(10)];
+  }
+
+  double _patternDistMeters(LatLng a, LatLng b) {
+    const r = 6371000.0;
+    final dLat = (b.latitude - a.latitude) * pi / 180.0;
+    final dLng = (b.longitude - a.longitude) * pi / 180.0;
+    final h = sin(dLat / 2) * sin(dLat / 2) +
+        cos(a.latitude * pi / 180.0) *
+            cos(b.latitude * pi / 180.0) *
+            sin(dLng / 2) *
+            sin(dLng / 2);
+    return 2 * r * asin(sqrt(h));
+  }
+
+  double _perpDistMetersForRender(LatLng p, LatLng a, LatLng b) {
+    const mPerDegLat = 111320.0;
+    final mPerDegLng = 111320.0 * cos(a.latitude * pi / 180.0);
+    final px = (p.longitude - a.longitude) * mPerDegLng;
+    final py = (p.latitude - a.latitude) * mPerDegLat;
+    final bx = (b.longitude - a.longitude) * mPerDegLng;
+    final by = (b.latitude - a.latitude) * mPerDegLat;
+    final len2 = bx * bx + by * by;
+    if (len2 == 0) return sqrt(px * px + py * py);
+    final t = ((px * bx + py * by) / len2).clamp(0.0, 1.0);
+    final dx = px - t * bx;
+    final dy = py - t * by;
+    return sqrt(dx * dx + dy * dy);
+  }
+
+  /// Ramer-Douglas-Peucker simplification, for RENDERING ONLY. Stored
+  /// polylines keep full resolution — snapping and progress maths read those.
+  List<LatLng> _simplifyForRender(List<LatLng> pts,
+      {double toleranceMeters = 8.0}) {
+    if (pts.length <= 2) return pts;
+    final keep = List<bool>.filled(pts.length, false);
+    keep[0] = true;
+    keep[pts.length - 1] = true;
+    final stack = <List<int>>[
+      [0, pts.length - 1]
+    ];
+    while (stack.isNotEmpty) {
+      final seg = stack.removeLast();
+      final first = seg[0];
+      final last = seg[1];
+      double maxD = 0.0;
+      int idx = -1;
+      for (int i = first + 1; i < last; i++) {
+        final d = _perpDistMetersForRender(pts[i], pts[first], pts[last]);
+        if (d > maxD) {
+          maxD = d;
+          idx = i;
+        }
+      }
+      if (idx != -1 && maxD > toleranceMeters) {
+        keep[idx] = true;
+        stack.add([first, idx]);
+        stack.add([idx, last]);
+      }
+    }
+    final out = <LatLng>[];
+    for (int i = 0; i < pts.length; i++) {
+      if (keep[i]) out.add(pts[i]);
+    }
+    return out;
+  }
+
   double _haversineMeters(LatLng a, LatLng b) {
     const R = 6371000.0; // Earth radius in meters
     final dLat = (b.latitude - a.latitude) * pi / 180;
@@ -2743,10 +2846,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
       updated.add(
         Polyline(
           polylineId: const PolylineId('remaining'),
-          points: bluePoints,
+          points: _simplifyForRender(bluePoints),
           color: const Color(0xFF1A73E8),
           width: 5,
-          patterns: [PatternItem.dot, PatternItem.gap(10)],
+          patterns: _routePattern(bluePoints),
         ),
       );
     }
@@ -4125,10 +4228,10 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
     polylines.add(
       Polyline(
         polylineId: const PolylineId('remaining'),
-        points: routePoints,
+        points: _simplifyForRender(routePoints),
         color: const Color(0xFF1A73E8), // blue
         width: 5,
-        patterns: [PatternItem.dot, PatternItem.gap(10)],
+        patterns: _routePattern(routePoints),
       ),
     );
   }
@@ -4454,7 +4557,13 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
         }
 
         final stop = _fixedStops[i];
-        final name = stop['name'] as String? ?? 'Stop ${i + 1}';
+        // Always a real place name. Reverse geocoding resolves via the Google
+        // Geocoding API, and a stop that still cannot be named is SKIPPED
+        // rather than rendered as a "Stop N" placeholder — an index-based label
+        // was also wrong here, because _fixedStops is ordered by distance and
+        // earlier entries get skipped, so the numbers came out non-sequential.
+        final name = (stop['name'] as String?)?.trim() ?? '';
+        if (name.isEmpty) continue;
         final isKeyStop = stop['is_key_stop'] == true;
         final isDriverHere = false; // Driver always shows as separate vehicle widget
 
@@ -4792,7 +4901,7 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
     // Passed stops from DB (no auto_timeline_points — client generates upcoming)
     final List<Map<String, dynamic>> autoStops = (_trackingData?.passedStops ?? []).map((pt) {
       return {
-        'name': pt['name']?.toString() ?? 'Stop',
+        'name': pt['name']?.toString().trim() ?? '',
         'lat': (pt['lat'] as num?)?.toDouble() ?? 0.0,
         'lng': (pt['lng'] as num?)?.toDouble() ?? 0.0,
         'is_key_stop': false,
@@ -4876,7 +4985,7 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
     // Passed stops from DB — permanent, never change
     final List<Map<String, dynamic>> passedStops = (_trackingData?.passedStops ?? []).map((pt) {
       return <String, dynamic>{
-        'name': pt['name']?.toString() ?? 'Stop',
+        'name': pt['name']?.toString().trim() ?? '',
         'lat': (pt['lat'] as num?)?.toDouble() ?? 0.0,
         'lng': (pt['lng'] as num?)?.toDouble() ?? 0.0,
         'dist_fraction': 0.0,
@@ -4909,7 +5018,7 @@ class _VehicleTrackingMapScreenV2State extends State<VehicleTrackingMapScreenV2>
         final sLat = (s['lat'] as num?)?.toDouble() ?? 0.0;
         final sLng = (s['lng'] as num?)?.toDouble() ?? 0.0;
         upcomingFromReroute.add({
-          'name': s['name']?.toString() ?? 'Stop',
+          'name': s['name']?.toString().trim() ?? '',
           'lat': sLat,
           'lng': sLng,
           'dist_fraction': 0.0,

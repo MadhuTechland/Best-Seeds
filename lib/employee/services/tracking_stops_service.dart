@@ -10,18 +10,26 @@ import 'package:bestseeds/routes/app_constants.dart';
 /// Upcoming stops generated client-side from Google Directions.
 class TrackingStopsService {
   /// Calculate recommended stop count based on total distance.
+  /// Roughly one stop per this many km on long routes, so the leg between two
+  /// drops still shows 6-10 places. Mirrors the customer app.
+  static const double _kmPerStopLongRoute = 22.0;
+
+  /// Upper bound so a very long haul stays scannable.
+  static const int _maxStops = 40;
+
   static int recommendedStopCount(double totalDistanceKm) {
     if (totalDistanceKm <= 0.5) return 0;
     if (totalDistanceKm <= 2) return 1;
     if (totalDistanceKm <= 5) return 2;
     if (totalDistanceKm <= 10) return 3;
-    if (totalDistanceKm <= 20) return 4;
-    if (totalDistanceKm <= 50) return 5;
-    if (totalDistanceKm <= 100) return 7;
-    if (totalDistanceKm <= 200) return 9;
-    if (totalDistanceKm <= 500) return 12;
-    if (totalDistanceKm <= 1000) return 15;
-    return 18;
+    if (totalDistanceKm <= 20) return 5;
+    if (totalDistanceKm <= 50) return 7;
+    if (totalDistanceKm <= 100) return 10;
+    if (totalDistanceKm <= 200) return 14;
+    // Past 200 km the count is proportional to distance so density stays
+    // constant. The old fixed buckets (12 for 200-500 km) put stops ~42 km
+    // apart, leaving long legs between drops looking empty.
+    return (totalDistanceKm / _kmPerStopLongRoute).round().clamp(14, _maxStops);
   }
 
   /// Calculate sub-stop count based on gap between two main stops.
