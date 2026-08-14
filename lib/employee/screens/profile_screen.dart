@@ -8,6 +8,7 @@ import 'package:bestseeds/routes/app_routes.dart';
 import 'package:bestseeds/screens/privacy_policy_screen.dart';
 import 'package:bestseeds/screens/terms_and_conditions_screen.dart';
 import 'package:bestseeds/widgets/profile_menu_item.dart';
+import 'package:bestseeds/widgets/app_version_text.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:share_plus/share_plus.dart';
@@ -125,6 +126,12 @@ class EmployeeProfileScreen extends StatelessWidget {
                 ),
               ),
             ),
+
+            // App version — reads the built version, so a release bump in
+            // pubspec is all that is needed. See AppVersionText.
+            const SizedBox(height: 24),
+            const AppVersionText(),
+            const SizedBox(height: 24),
           ],
         ),
       ),
